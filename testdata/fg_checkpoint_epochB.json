@@ -1,0 +1,36 @@
+{
+  "project_id": "arbor",
+  "task_id": "MVP-FG-CKPT-SCHEMA-FIXTURE-20260911",
+  "repo": "task-graph",
+  "host": "workstation-a",
+  "account_or_harness": "codex",
+  "thread": "fleet-e27-parallel-execution",
+  "session": "fixture-session-epoch-b",
+  "absolute_worktree": "/workspace/arbor/worktrees/mvp-fg-ckpt-schema-fixture-20260911",
+  "branch": "claude/mvp-fg-ckpt-schema-fixture-20260911",
+  "commit_sha": "",
+  "pr_or_spec_ref": "harness-procedures/WORKFLOW.md#work_identity_enforcement.handover",
+  "checkpoint_ref": "D:/workspace/scratch/open-surface-r23/lanes/fg_id_envelope_schema.checkpoint.json#sha256=2742063616e90b01ea039d67b06f360f283b0e6ec8da0ee825cabfb5a8102fca",
+  "measured_at": "2026-09-20T20:50:00Z",
+  "epoch": 2,
+  "head": "8f41a9cad0a32197890c8281b045c4c7facfd6db",
+  "upstream": "origin/claude/mvp-fg-ckpt-schema-fixture-20260911",
+  "dirty_or_untracked": {
+    "dirty": false,
+    "untracked": true,
+    "paths": [
+      "testdata/fg_checkpoint.schema.json"
+    ]
+  },
+  "artifact_hashes": {
+    "testdata/fg_envelope.schema.json": "98b12f02a79848d49cead311630615709c7513c2a69fcf3e68f08ece924b2af6",
+    "testdata/fg_checkpoint.schema.json": "ea49de9e81c074c13908ec7de4711a32f9443e880edd65762f1039b709922b12"
+  },
+  "last_action": "Authored testdata/fg_checkpoint.schema.json and validated it against the epoch fixtures.",
+  "next_action": "Commit and push the lane branch, then freeze the manifest.",
+  "preserve_evidence": [
+    "LNK-dcaed0d5-4466-4aab-8aa0-9d2bdbb294a3",
+    "LNK-d849fc6e-2743-4f72-9040-35cbbabe43f1"
+  ],
+  "blocker_coordinates": []
+}

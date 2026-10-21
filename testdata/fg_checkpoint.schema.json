@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://velenzaboc.internal/task-graph/testdata/fg_checkpoint.schema.json",
+  "title": "Fleet No-Clobber Handover Checkpoint",
+  "description": "One immutable fleet handover checkpoint: the fleet binding/evidence envelope (fg_envelope.schema.json) plus the epoch, git HEAD, upstream, dirty/untracked preservation evidence, artifact hashes, last/next action, preserve-evidence refs and blocker coordinates that let the next account resume the same task_id from this checkpoint, per WORKFLOW.md work_identity_enforcement.handover and MVP-EXECUTION-DISPATCH-CONTRACT-20260909's handoff clause. Every envelope property is composed by $ref to its exact definition in fg_envelope.schema.json, and the envelope's required set is carried unchanged. The document is closed: any other property, including any credential-shaped one, refuses. There is deliberately no credential, token, secret or key field; artifact_hashes values are constrained to SHA-256 digests and preserve_evidence and blocker_coordinates hold references, never material. Two checkpoints for the same project_id + task_id + repo are competing writers distinguished by epoch; selecting between them is the no-clobber selector's concern, not this schema's.",
+  "type": "object",
+  "properties": {
+    "project_id": { "$ref": "fg_envelope.schema.json#/properties/project_id" },
+    "task_id": { "$ref": "fg_envelope.schema.json#/properties/task_id" },
+    "repo": { "$ref": "fg_envelope.schema.json#/properties/repo" },
+    "host": { "$ref": "fg_envelope.schema.json#/properties/host" },
+    "account_or_harness": { "$ref": "fg_envelope.schema.json#/properties/account_or_harness" },
+    "thread": { "$ref": "fg_envelope.schema.json#/properties/thread" },
+    "session": { "$ref": "fg_envelope.schema.json#/properties/session" },
+    "absolute_worktree": { "$ref": "fg_envelope.schema.json#/properties/absolute_worktree" },
+    "branch": { "$ref": "fg_envelope.schema.json#/properties/branch" },
+    "commit_sha": { "$ref": "fg_envelope.schema.json#/properties/commit_sha" },
+    "pr_or_spec_ref": { "$ref": "fg_envelope.schema.json#/properties/pr_or_spec_ref" },
+    "checkpoint_ref": { "$ref": "fg_envelope.schema.json#/properties/checkpoint_ref" },
+    "measured_at": { "$ref": "fg_envelope.schema.json#/properties/measured_at" },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "the checkpoint's monotonic epoch for its task identity; competing checkpoints of one task carry distinct epochs and a checkpoint is never rewritten in place"
+    },
+    "head": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "the 40 lowercase hex character git HEAD of the worktree when this checkpoint was written; always present, unlike the envelope's commit_sha which is empty for a checkpoint not backed by a specific commit"
+    },
+    "upstream": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the remote-tracking ref the branch tracked when this checkpoint was written, e.g. \"origin/main\""
+    },
+    "dirty_or_untracked": {
+      "type": "object",
+      "description": "preservation evidence for uncommitted work in the worktree; when anything is dirty or untracked the affected paths are named so the next account can preserve them",
+      "properties": {
+        "dirty": { "type": "boolean", "description": "true when tracked files have uncommitted modifications" },
+        "untracked": { "type": "boolean", "description": "true when untracked files are present" },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "worktree-relative paths of the dirty and untracked files; non-empty exactly when at least one flag is true and empty exactly when both flags are false"
+        }
+      },
+      "required": ["dirty", "untracked", "paths"],
+      "additionalProperties": false,
+      "if": {
+        "anyOf": [
+          { "properties": { "dirty": { "const": true } }, "required": ["dirty"] },
+          { "properties": { "untracked": { "const": true } }, "required": ["untracked"] }
+        ]
+      },
+      "then": {
+        "properties": { "paths": { "minItems": 1 } }
+      },
+      "else": {
+        "properties": { "paths": { "maxItems": 0 } }
+      }
+    },
+    "artifact_hashes": {
+      "type": "object",
+      "description": "artifact path -> lowercase hex SHA-256 of that artifact's exact bytes at checkpoint time",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "last_action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the last concrete action completed before this checkpoint was written"
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the next concrete action the resuming account must take; a checkpoint without one is refused"
+    },
+    "preserve_evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "references (worklink ids, paths, commit or PR coordinates) to evidence the next account must preserve; references only, never evidence material"
+    },
+    "blocker_coordinates": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "coordinates (task ids, gate coordinates, or artifact references) of what currently blocks the task; empty when nothing blocks it"
+    }
+  },
+  "required": [
+    "project_id",
+    "task_id",
+    "repo",
+    "host",
+    "account_or_harness",
+    "thread",
+    "session",
+    "absolute_worktree",
+    "branch",
+    "commit_sha",
+    "pr_or_spec_ref",
+    "checkpoint_ref",
+    "measured_at",
+    "epoch",
+    "head",
+    "upstream",
+    "dirty_or_untracked",
+    "artifact_hashes",
+    "last_action",
+    "next_action",
+    "preserve_evidence",
+    "blocker_coordinates"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,36 @@
+You are auditing the value of ONE field of ONE node in a canonical doc-graph.
+The audit rule is R6_no_prose:
+
+  Every payload / contract string value MUST be EXACTLY ONE of:
+    (1) a single declarative clause — one finite verb, no compound, no
+        subordinating clauses introducing further claims
+    (2) a snake_case enum or token (e.g. "matryoshka_brick", "fail_closed")
+    (3) a structural identifier (dotted path, UUID, kebab-case slug,
+        version tag, file path, regex literal, JSON Path)
+    (4) an empty string
+
+  It MUST NOT be:
+    - prose narrative spanning multiple sentences
+    - a compound statement joined by "and" / "or" / "but" / ";" / "—"
+      that introduces a SECOND claim (lists of identifiers are fine)
+    - a sentence with a subordinating clause that adds a SECOND claim
+      ("X that Y", "X because Y", "X when Y", "X if Y", "X while Y")
+      — note: relative clauses that only restrict the subject ("the
+      grant THAT the gate ratified") are fine; the test is whether a
+      reader walks away with one fact or more than one
+    - a list rendered as prose ("first we do A. then B. then C.")
+    - Markdown formatting (backticks, **bold**, _italic_, # headings)
+    - a paragraph (contains a blank line / double newline)
+
+The caller will append, AFTER this rule body, a VALUE UNDER AUDIT section
+delimited by <<<>>> and a CONTEXT section. Read the value, ignore the
+context for verdict logic, and respond with EXACTLY two lines and nothing
+else. No preamble, no markdown, no surrounding quotes.
+
+VERDICT: clean | prose
+REASON: <one short sentence, ≤ 20 words, naming the specific failing
+         clause / token / marker for "prose", or "single_clause" /
+         "identifier" / "enum" / "empty" for "clean">
+
+VERDICT must be exactly "clean" or "prose" — lowercase, no other words,
+no quotes, no punctuation.

@@ -1,0 +1,10 @@
+bin/
+/spec-graph
+*.test
+*.out
+.DS_Store
+
+# Local config — the canonical example ships as spec-graph.config.example.json.
+# Each environment supplies its own spec-graph.config.json (or SPEC_GRAPH_CONFIG
+# path).
+spec-graph.config.json

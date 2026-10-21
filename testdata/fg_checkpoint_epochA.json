@@ -1,0 +1,35 @@
+{
+  "project_id": "arbor",
+  "task_id": "MVP-FG-CKPT-SCHEMA-FIXTURE-20260911",
+  "repo": "task-graph",
+  "host": "workstation-c",
+  "account_or_harness": "claude",
+  "thread": "fleet-e27-parallel-execution",
+  "session": "fixture-session-epoch-a",
+  "absolute_worktree": "D:/workspace/worktrees/mvp-fg-ckpt-schema-fixture-20260911",
+  "branch": "claude/mvp-fg-ckpt-schema-fixture-20260911",
+  "commit_sha": "",
+  "pr_or_spec_ref": "harness-procedures/WORKFLOW.md#work_identity_enforcement.handover",
+  "checkpoint_ref": "D:/workspace/scratch/open-surface-r23/lanes/fg_id_envelope_schema.checkpoint.json#sha256=2742063616e90b01ea039d67b06f360f283b0e6ec8da0ee825cabfb5a8102fca",
+  "measured_at": "2026-09-20T20:10:00Z",
+  "epoch": 1,
+  "head": "699ef22bb8af47616d98892f9637b98979c6cabf",
+  "upstream": "origin/main",
+  "dirty_or_untracked": {
+    "dirty": false,
+    "untracked": false,
+    "paths": []
+  },
+  "artifact_hashes": {
+    "testdata/fg_envelope.schema.json": "98b12f02a79848d49cead311630615709c7513c2a69fcf3e68f08ece924b2af6"
+  },
+  "last_action": "Read the delivered fg_envelope.schema.json and the task note's checkpoint field list.",
+  "next_action": "Author testdata/fg_checkpoint.schema.json composing the envelope properties by $ref.",
+  "preserve_evidence": [
+    "LNK-dcaed0d5-4466-4aab-8aa0-9d2bdbb294a3",
+    "LNK-d849fc6e-2743-4f72-9040-35cbbabe43f1"
+  ],
+  "blocker_coordinates": [
+    "MVP-FG-ID-ENVELOPE-SCHEMA-20260911:authoring"
+  ]
+}

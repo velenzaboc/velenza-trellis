@@ -1,0 +1,860 @@
+{
+  "_comment": "task-graph config. Copied from spec-graph's config-driven framework and retargeted to the fleet TASK-TRACKING domain. Every behavioral value lives here (binary_is_never_sot). node_kinds + edge_labels are the CLOSED task-domain registry finalized against OOD_GRAPH_PROTOCOL_v1 (doc_id 767c2399-87f9-4859-ac64-afb575bdb263): concept-first, atomic-single-clause (R6 no-prose), edges-carry-meaning (every cross-entity relationship is a typed edge, never an embedded id string), dedupe-load-bearing (one concept = one node_kind), reference-by-stable-id, reciprocity (reciprocal pairs admit atomically). task_statuses/dependency_kinds/artifact_kinds (P3-GT-FP-REGISTRIES) close the task-plan-native Tasks.status/TaskDeps.kind/TaskLinks.artifact_type free-text columns the same way: each member's `absorbs` array is the EXPLICIT, reviewable reconciliation of every legacy free-text literal measured live on task-plan as of 2026-08-16 onto exactly one canonical member — verified exhaustive (every measured literal absorbed exactly once, nothing extra) by the fixture tests in registries_test.go. absorbs is read-side reconciliation only; a NEW write must supply an already-canonical member name (see registries.go Resolve vs Canonicalize). RE-MEASURED 2026-09-05: two literals appeared AFTER that closure and were absorbed here — \"planned\" (5,827 rows, first written 2026-08-24) onto not_started and \"corrected_unmerged\" (4 rows, first written 2026-08-25) onto in_review. They were written by the stale writers still serving task-plan (the July Cloud Run revision and workstation-c local daemon, both predating these registries). Until absorbed, checkTaskStatusWrite refused EVERY status change on those rows — Canonicalize(current) returned not-found, so 5,831 tasks were frozen. Re-measure with SELECT status, COUNT(*) FROM Tasks GROUP BY status whenever a non-registry writer is suspected. RETIRED 2026-09-14: MVP-GRAPH-STATUS-NORMALIZATION migrated every legacy Tasks.status literal through the registry-checked write path under D:/workspace/scratch/open-surface-r26/lanes/rule_mvp_graph_status_normalization.decision.json, the live census of non-canonical statuses reached zero (worklink LNK-b5ea4bd0), and every task_statuses absorbs list now holds only its own member name; the dated census is the measuredLiveTaskStatusesAfterNormalization fixture in registries_test.go.",
+  "mode": "experimental_bootstrap",
+  "google_credentials": {
+    "credentials_source": "application_default",
+    "credentials_profile": "impersonated_service_account",
+    "credentials_identity": "task-graph-local@example-project.iam.gserviceaccount.com"
+  },
+  "experimental_admitter": "EXPERIMENTAL_BOOTSTRAP",
+  "experimental_query_enabled": true,
+  "default_organization_id": "example-org",
+  "default_project_id": "arbor",
+  "init_database_allowlist": [
+    "task-graph"
+  ],
+  "listen_address": "127.0.0.1:8790",
+  "embedding": {
+    "provider": "vertex_ai",
+    "project": "example-project",
+    "location": "us-central1",
+    "model": "gemini-embedding-2-preview",
+    "dimensions": 3072,
+    "max_text_bytes": 32768
+  },
+  "dedup_policy": {
+    "embedding_similarity_threshold": 0.08,
+    "candidate_limit": 5,
+    "skip_kinds": []
+  },
+  "pipeline": {
+    "_comment": "Consumed ONLY by bootstrap/cmd/spec-lint (the OOD R3-R15 gate). The main task-graph daemon ignores this section (json.Unmarshal drops unknown keys). R6 no-prose is Flash-backed; every flash field is REQUIRED (spec-lint fails-closed without it).",
+    "flash": {
+      "provider": "vertex_ai",
+      "project": "example-project",
+      "location": "us-central1",
+      "model": "gemini-2.5-flash",
+      "max_output_tokens": 256,
+      "temperature": 0,
+      "prompts": {
+        "r6_prose_check_path": "./bootstrap/prompts/r6_prose_check.txt"
+      }
+    }
+  },
+  "substrates": [
+    {
+      "id": "task_graph_iter1",
+      "description": "Fleet task-tracking graph — live task-plan Tasks/TaskLinks/TaskDeps store",
+      "spanner_database": "projects/example-project/instances/example-instance/databases/task-plan",
+      "read_only": false,
+      "task_store_type": "fleet_plan_native",
+      "task_table": "Tasks",
+      "worklink_table": "TaskLinks",
+      "dep_table": "TaskDeps"
+    }
+  ],
+  "node_kinds": [
+    {
+      "name": "task",
+      "substrate_id": "task_graph_iter1",
+      "artifact_type": "task",
+      "version_scope": "stable_id_preserved",
+      "what_it_represents": "one fleet plan-to-done unit of work at any tree level (goal, pillar, critical_path, milestone, work_task, gap, or worker_thread), addressed by its snake_case canonical_name",
+      "required_contract_fields": [
+        "canonical_name",
+        "task_ref",
+        "level"
+      ],
+      "required_payload_fields": [
+        "status",
+        "pillar"
+      ]
+    },
+    {
+      "name": "artifact",
+      "substrate_id": "task_graph_iter1",
+      "artifact_type": "artifact",
+      "version_scope": "stable_id_preserved",
+      "what_it_represents": "one work artifact (pr, circuit, spec, dispatch, finding, commit, binding) that advanced a task, addressed by its snake_case canonical_name",
+      "required_contract_fields": [
+        "canonical_name",
+        "artifact_type_kind",
+        "artifact_ref"
+      ],
+      "required_payload_fields": []
+    }
+  ],
+  "edge_labels": [
+    {
+      "name": "advances",
+      "source_kinds": [
+        "artifact"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "edge_family": "impl",
+      "forbid_self_loops": true,
+      "direction": "artifact_to_task",
+      "meaning": "the artifact advanced the task"
+    },
+    {
+      "name": "owned_by",
+      "source_kinds": [
+        "task"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "edge_family": "ref",
+      "forbid_self_loops": true,
+      "direction": "task_to_thread_task",
+      "meaning": "the task is owned by the worker-thread task"
+    },
+    {
+      "name": "parent_of",
+      "source_kinds": [
+        "task"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "reciprocal_label": "child_of",
+      "edge_family": "struct",
+      "forbid_self_loops": true,
+      "direction": "parent_to_child",
+      "meaning": "the parent task contains the child task in the plan tree"
+    },
+    {
+      "name": "child_of",
+      "source_kinds": [
+        "task"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "reciprocal_label": "parent_of",
+      "edge_family": "struct",
+      "forbid_self_loops": true,
+      "direction": "child_to_parent",
+      "meaning": "the child task belongs to the parent task in the plan tree"
+    },
+    {
+      "name": "gates",
+      "source_kinds": [
+        "task"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "reciprocal_label": "gated_by",
+      "edge_family": "dep",
+      "forbid_self_loops": true,
+      "direction": "blocker_to_blocked",
+      "meaning": "the source task gates (blocks) the target task"
+    },
+    {
+      "name": "gated_by",
+      "source_kinds": [
+        "task"
+      ],
+      "target_kinds": [
+        "task"
+      ],
+      "reciprocal_label": "gates",
+      "edge_family": "dep",
+      "forbid_self_loops": true,
+      "direction": "blocked_to_blocker",
+      "meaning": "the source task is gated by (blocked on) the target task"
+    }
+  ],
+  "task_statuses": [
+    {
+      "name": "not_started",
+      "terminal": false,
+      "legal_next": [
+        "in_progress",
+        "blocked",
+        "in_review",
+        "done",
+        "cancelled",
+        "archived"
+      ],
+      "absorbs": [
+        "not_started"
+      ]
+    },
+    {
+      "name": "in_progress",
+      "terminal": false,
+      "legal_next": [
+        "not_started",
+        "blocked",
+        "in_review",
+        "done",
+        "cancelled",
+        "archived"
+      ],
+      "absorbs": [
+        "in_progress"
+      ]
+    },
+    {
+      "name": "blocked",
+      "terminal": false,
+      "legal_next": [
+        "not_started",
+        "in_progress",
+        "in_review",
+        "done",
+        "cancelled",
+        "archived"
+      ],
+      "absorbs": [
+        "blocked"
+      ]
+    },
+    {
+      "name": "in_review",
+      "terminal": false,
+      "legal_next": [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "done",
+        "cancelled",
+        "archived"
+      ],
+      "absorbs": [
+        "in_review"
+      ]
+    },
+    {
+      "name": "done",
+      "terminal": true,
+      "legal_next": [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "in_review",
+        "cancelled",
+        "archived"
+      ],
+      "absorbs": [
+        "done"
+      ]
+    },
+    {
+      "name": "cancelled",
+      "terminal": true,
+      "legal_next": [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "in_review",
+        "done",
+        "archived"
+      ],
+      "absorbs": [
+        "cancelled"
+      ]
+    },
+    {
+      "name": "archived",
+      "terminal": true,
+      "legal_next": [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "in_review",
+        "done",
+        "cancelled"
+      ],
+      "absorbs": [
+        "archived"
+      ]
+    }
+  ],
+  "dependency_kinds": [
+    {
+      "name": "gates",
+      "edge_family": "dep",
+      "blocking": true,
+      "lifecycle_marker": false,
+      "legal_next": [
+        "archived"
+      ],
+      "absorbs": [
+        "gates",
+        "blocks",
+        "blocks_until_done",
+        "hard",
+        "gated_by",
+        "finding_gate",
+        "validation_gate",
+        "composition_gate",
+        "requires"
+      ]
+    },
+    {
+      "name": "source_map",
+      "edge_family": "ref",
+      "blocking": false,
+      "lifecycle_marker": false,
+      "legal_next": [
+        "archived"
+      ],
+      "absorbs": [
+        "source_map",
+        "closure",
+        "atomic_finding"
+      ]
+    },
+    {
+      "name": "archived",
+      "edge_family": "dep",
+      "blocking": false,
+      "lifecycle_marker": true,
+      "legal_next": [
+        "gates",
+        "source_map"
+      ],
+      "absorbs": [
+        "archived"
+      ]
+    }
+  ],
+  "artifact_kinds": [
+    {
+      "name": "admission",
+      "absorbs": [
+        "access_request",
+        "admission",
+        "admission_attempt",
+        "admission_blocker",
+        "admission_evidence",
+        "admission_log",
+        "admission_probe",
+        "admission_proof",
+        "admission_receipts",
+        "admitted_batch",
+        "authorization",
+        "genesis_admission",
+        "live_admission",
+        "seed_admission"
+      ]
+    },
+    {
+      "name": "binding",
+      "absorbs": [
+        "binding",
+        "brick",
+        "live_binding",
+        "lobe_binding",
+        "queue_binding"
+      ]
+    },
+    {
+      "name": "blocker",
+      "absorbs": [
+        "acceptance_blocker",
+        "blocked_checklist",
+        "blocker",
+        "blocker_correction",
+        "blocker_evidence",
+        "blocker_inventory",
+        "blocker_proof",
+        "blocker_report",
+        "blocker_revalidation",
+        "board_inventory",
+        "browser",
+        "certification_blocker",
+        "certification_inventory",
+        "dependency_blocker",
+        "dependency_unblock",
+        "final_inventory",
+        "infra_blocker",
+        "inventory_decomposition",
+        "live_dependency_blocker",
+        "live_inventory",
+        "package_blocker",
+        "preflight_blocker",
+        "remaining_blocker",
+        "upstream_blocker"
+      ]
+    },
+    {
+      "name": "checkpoint",
+      "absorbs": [
+        "checkpoint",
+        "closure",
+        "decomposition",
+        "implementation_checkpoint",
+        "plan_graph",
+        "task_decomposition"
+      ]
+    },
+    {
+      "name": "circuit",
+      "absorbs": [
+        "circuit",
+        "circuit_admission",
+        "circuit_candidate",
+        "circuit_package",
+        "circuit_run",
+        "circuit_set",
+        "live_circuit",
+        "live_circuit_identity"
+      ]
+    },
+    {
+      "name": "commit",
+      "absorbs": [
+        "commit",
+        "git_commit",
+        "git_merge_commit",
+        "merge",
+        "merge_commit",
+        "source_commit",
+        "source_merge",
+        "spec_commit"
+      ]
+    },
+    {
+      "name": "decision",
+      "absorbs": [
+        "authority_resolution",
+        "blocker_decision",
+        "decision",
+        "decision_candidate",
+        "resolution"
+      ]
+    },
+    {
+      "name": "deploy",
+      "absorbs": [
+        "browser_runtime_blocker",
+        "build",
+        "bundle",
+        "ci",
+        "ci_blocker",
+        "ci_repair",
+        "ci_run",
+        "container_image",
+        "deploy",
+        "deploy_blocker",
+        "deploy_probe",
+        "deploy_proof",
+        "deploy_run",
+        "deploy_workflow",
+        "deployment",
+        "deployment_failure",
+        "deployment_run",
+        "github_run",
+        "image",
+        "image_digest",
+        "live_deployment_receipt",
+        "package",
+        "release",
+        "workflow",
+        "workflow_run"
+      ]
+    },
+    {
+      "name": "dispatch",
+      "absorbs": [
+        "agent",
+        "agent_dispatch",
+        "agent_result",
+        "agent_status",
+        "certification_dispatch",
+        "dispatch",
+        "dispatch_agent",
+        "dispatch_checkpoint",
+        "dispatch_child",
+        "dispatch_context",
+        "dispatch_contract",
+        "dispatch_correction",
+        "dispatch_plan",
+        "dispatch_protocol",
+        "dispatch_release",
+        "dispatch_supersession"
+      ]
+    },
+    {
+      "name": "evidence",
+      "absorbs": [
+        "attestation",
+        "check_receipt",
+        "cleanup_evidence",
+        "closure_receipt",
+        "dependency_proof",
+        "downstream_proof",
+        "evidence",
+        "evidence_correction",
+        "infra_proof",
+        "live_attempt",
+        "live_authority_receipt",
+        "live_evidence",
+        "live_log_receipt",
+        "live_probe",
+        "live_proof",
+        "live_receipt",
+        "non_blocker_proof",
+        "operation_evidence",
+        "package_evidence",
+        "partial_verification_receipt",
+        "performance_receipt",
+        "plan_proof",
+        "probe",
+        "probe_assertion",
+        "probe_run",
+        "proof",
+        "proof_evidence",
+        "proof_record",
+        "ready_snapshot",
+        "resolver_probe",
+        "rollup_proof",
+        "row_proof",
+        "run_probe",
+        "shell_proof",
+        "substrate_proof",
+        "sync_proof"
+      ]
+    },
+    {
+      "name": "finding",
+      "absorbs": [
+        "analysis",
+        "assessment",
+        "audit",
+        "audit_addendum",
+        "audit_correction",
+        "audit_evidence",
+        "audit_manifest",
+        "audit_proof",
+        "code_review_finding",
+        "correction",
+        "defect",
+        "discovery",
+        "error",
+        "finding",
+        "finding_batch",
+        "finding_batch_plan",
+        "finding_ledger",
+        "finding_retracted",
+        "independent_audit",
+        "report"
+      ]
+    },
+    {
+      "name": "ledger",
+      "absorbs": [
+        "certification_ledger",
+        "ledger",
+        "ledger_entry",
+        "ledger_projection",
+        "queue_ledger",
+        "rejection_ledger"
+      ]
+    },
+    {
+      "name": "other",
+      "absorbs": [
+        "artifact",
+        "asset",
+        "bundle_publish",
+        "candidate",
+        "child_task",
+        "dependency",
+        "dependency_map_update",
+        "dependency_separation",
+        "dependency_update",
+        "exposure_increment",
+        "file",
+        "gate",
+        "graph",
+        "interface",
+        "lease_correction",
+        "live_query",
+        "merge_gate",
+        "operator_note",
+        "package_gate",
+        "preview",
+        "result",
+        "skill",
+        "staged_artifact",
+        "submission",
+        "task",
+        "worklink"
+      ]
+    },
+    {
+      "name": "pr",
+      "absorbs": [
+        "circuit_candidate_pr",
+        "github_pr",
+        "pr",
+        "pr+live_admission",
+        "pr_disposition",
+        "pr_fix",
+        "pr_fix_commit",
+        "pr_merge",
+        "pr_merged",
+        "pr_open",
+        "pr_validation",
+        "pull_request",
+        "source_pr"
+      ]
+    },
+    {
+      "name": "queue",
+      "absorbs": [
+        "queue_assignment_protocol",
+        "queue_certification",
+        "queue_certification_correction",
+        "queue_edge_blocker",
+        "queue_grouping_audit",
+        "queue_release"
+      ]
+    },
+    {
+      "name": "registry",
+      "absorbs": [
+        "brick_graph_update",
+        "capacity_snapshot",
+        "catalog",
+        "gcs_bundle",
+        "gcs_manifest",
+        "live_grant",
+        "live_iam_policy",
+        "live_lineage",
+        "live_registry",
+        "live_registry_proof",
+        "live_registry_provenance",
+        "live_row",
+        "live_secret",
+        "lumen_registry",
+        "manifest",
+        "registry",
+        "registry_probe",
+        "registry_proof"
+      ]
+    },
+    {
+      "name": "review",
+      "absorbs": [
+        "approval",
+        "approval_blocker",
+        "catalog_smoke",
+        "certification",
+        "certification_result",
+        "review",
+        "review_fix",
+        "review_receipt",
+        "review_request",
+        "review_verdict",
+        "verdict"
+      ]
+    },
+    {
+      "name": "runtime",
+      "absorbs": [
+        "capability_gap",
+        "heartbeat",
+        "running_artifact",
+        "running_artifact_proof",
+        "runtime",
+        "runtime_artifact",
+        "runtime_baseline",
+        "runtime_blocker",
+        "runtime_check",
+        "runtime_evidence",
+        "runtime_image",
+        "runtime_probe",
+        "runtime_proof",
+        "runtime_proof_checkpoint",
+        "runtime_verification"
+      ]
+    },
+    {
+      "name": "schema",
+      "absorbs": [
+        "config",
+        "config_seed",
+        "ddl",
+        "ddl_apply",
+        "ddl_grant",
+        "kernel_boundary",
+        "kernel_config",
+        "kernel_config_reseed",
+        "lobe_config",
+        "lobe_config_admission",
+        "schema",
+        "schema_gap",
+        "schema_proof",
+        "seed",
+        "seed_file",
+        "spanner_operation",
+        "spanner_permission_proof",
+        "spanner_row"
+      ]
+    },
+    {
+      "name": "source",
+      "absorbs": [
+        "source",
+        "source_blocker",
+        "source_gap",
+        "source_gate",
+        "source_inventory",
+        "source_packet",
+        "source_probe",
+        "source_proof",
+        "source_review",
+        "source_selection_proof"
+      ]
+    },
+    {
+      "name": "spec",
+      "absorbs": [
+        "architecture",
+        "claim_protocol",
+        "contract",
+        "design",
+        "doc",
+        "governance",
+        "implementation",
+        "implementation_candidate",
+        "implementation_contract",
+        "research",
+        "spec",
+        "spec-worktree",
+        "spec_citation",
+        "spec_draft"
+      ]
+    },
+    {
+      "name": "status",
+      "absorbs": [
+        "child_status",
+        "completion",
+        "dependency_ready",
+        "lane_update",
+        "lifecycle",
+        "lifecycle_correction",
+        "lifecycle_repair",
+        "milestone",
+        "next_role",
+        "next_step",
+        "progress",
+        "status",
+        "status_blocker",
+        "status_correction",
+        "status_note",
+        "status_update",
+        "task_status"
+      ]
+    },
+    {
+      "name": "successor",
+      "absorbs": [
+        "authority_gap",
+        "candidate_packet",
+        "child_gap",
+        "gap_map",
+        "successor",
+        "successor_plan",
+        "successor_prequalification",
+        "supersession"
+      ]
+    },
+    {
+      "name": "template",
+      "absorbs": [
+        "spanner_query_template",
+        "spanner_template",
+        "template",
+        "template_admission",
+        "template_set"
+      ]
+    },
+    {
+      "name": "tool",
+      "absorbs": [
+        "brick_registry_proof",
+        "cleanup",
+        "command",
+        "control",
+        "fixture",
+        "indexing",
+        "kernel_fix",
+        "live_fix",
+        "log",
+        "operation",
+        "operator_runbook",
+        "recovery",
+        "required_go_change",
+        "run",
+        "search_console",
+        "self_forge_process",
+        "shell_toolchain_proof",
+        "sync",
+        "tool"
+      ]
+    },
+    {
+      "name": "validation",
+      "absorbs": [
+        "catalog_proof",
+        "check",
+        "coverage_manifest",
+        "dry-run",
+        "dry_run",
+        "kernel_test_fix",
+        "live_regression_proof",
+        "live_test_failure",
+        "revalidation",
+        "smoke",
+        "test",
+        "test_evidence",
+        "test_failure",
+        "test_green",
+        "test_proof",
+        "test_red",
+        "tests",
+        "typecheck",
+        "validation",
+        "validation_checkpoint",
+        "validation_commands",
+        "validation_comment",
+        "validation_fail",
+        "validation_failure",
+        "validation_fix",
+        "validation_pass",
+        "validation_report",
+        "validation_run",
+        "validator",
+        "verification",
+        "verification_receipt"
+      ]
+    },
+    {
+      "name": "worktree",
+      "absorbs": [
+        "branch",
+        "mirror_sync",
+        "repository",
+        "shared_checkout_sync",
+        "worktree"
+      ]
+    }
+  ],
+  "projections": [
+    {
+      "name": "task_canonical_json",
+      "description": "Render a task node and its closure as canonical structured JSON",
+      "owning_spec": "task-graph requirements §2"
+    }
+  ]
+}

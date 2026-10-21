@@ -1,0 +1,15 @@
+{
+  "project_id": "arbor",
+  "task_id": "MVP-FG-ID-ENVELOPE-SCHEMA-20260911",
+  "repo": "task-graph",
+  "host": "workstation-c",
+  "account_or_harness": "claude",
+  "thread": "velenza-mvp-execution-wave1",
+  "session": "f77eafd6-a548-49c1-8a26-02c6babc7b64",
+  "absolute_worktree": "D:/workspace/worktrees/mvp-fg-id-envelope-schema-20260911",
+  "branch": "claude/mvp-fg-id-envelope-schema-20260911",
+  "commit_sha": "665d77c4ae4208edf45a664262507860004e2c94",
+  "pr_or_spec_ref": "task-graph/REQUIREMENTS.md#section-2",
+  "checkpoint_ref": "D:/workspace/scratch/open-surface-r23/lanes/fg_id_envelope_schema.checkpoint.json#sha256=2742063616e90b01ea039d67b06f360f283b0e6ec8da0ee825cabfb5a8102fca",
+  "measured_at": "2026-09-13T04:21:37Z"
+}

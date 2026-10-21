@@ -1,0 +1,529 @@
+{
+  "provenance": {
+    "source_revision": "fp1:2026-09-11T14:02:30.609016Z",
+    "source_capture": "C:/Users/developer/.claude/projects/D--workspace/9cc17fc9-ddee-4678-a4b2-6a99cf2ec0a8/subagents/workflows/wf_232534d2-216/agent-a08febe9f2c7778ba.jsonl:74",
+    "source_captured_at": "2026-09-11T14:02:30.991Z",
+    "source_snapshot_sha256": "7edf84d8e5b882786d1599b9002e1f566c3b40915efd8e198292a07c12eafdf2",
+    "source_content_hashes": {
+      "counts": "135abbc86f7a8b0057920479ef04a265692e55977843ddbfa231bae78c0cde12",
+      "dependencies": "c40333649976911f2be96df735565cd5d7d71909d24188ebc6c797385fb629b0",
+      "snapshot": "06aa757871bac41e4571268847dfed9b13cf7be0914ac8e67cfcede97404618c",
+      "tasks": "95a2c2d392b8eafa378138b4b850961fc70e298525ca558de95b0e90de8ce646",
+      "worklinks": "5f1d5acf9a72e9eb5f569512362d8fffbe7c4613df65a1662d0a704b1b00149b"
+    },
+    "source_counts": {
+      "tasks": 14,
+      "dependencies": 16,
+      "worklinks": 36
+    },
+    "derivation": "Retain all 14 task identities/statuses/owners/parents and all 36 active worklinks. Retain both named real worklink rows verbatim; omit unrelated notes, dependencies, counts, and source hashes from the check input. The historical projection omitted repo and top-level complete: explicitly add synthetic task-graph repos only to the two in_progress tasks and complete=true from the uncapped source collection totals. This is a bounded test fixture, not a live-state assertion.",
+    "synthetic_evidence": "Positive overlays supply missing binding coordinates and explicit per-link evidence; they are test data, never inferred from owners or notes. The negative variant adds second_binding without changing either real link ID or kind."
+  },
+  "snapshot": {
+    "project_id": "arbor",
+    "store_type": "fleet_plan_native",
+    "revision": "fp1:2026-09-11T14:02:30.609016Z",
+    "read_timestamp": "2026-09-11T14:02:30.609016Z",
+    "complete": true,
+    "scope": {
+      "capped": false,
+      "complete": true,
+      "membership_count": 14,
+      "mode": "execution_subtree",
+      "root_task_id": "MVP-LANE-FLEET-GOVERNANCE"
+    },
+    "tasks": [
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-GRAPH-PRODUCTION-SEAL-20260909",
+        "status": "blocked",
+        "owner": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "parent_id": "MVP-LANE-FLEET-GOVERNANCE"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "status": "in_progress",
+        "owner": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "parent_id": "MVP-LANE-FLEET-GOVERNANCE",
+        "repo": "task-graph"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "status": "in_progress",
+        "owner": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "parent_id": "MVP-LANE-FLEET-GOVERNANCE",
+        "repo": "task-graph"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909",
+        "status": "in_review",
+        "owner": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "parent_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "status": "in_review",
+        "owner": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "parent_id": "MVP-LANE-FLEET-GOVERNANCE"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-VALIDATE-FLEET-GOVERNANCE-20260910",
+        "status": "in_review",
+        "owner": "01a08cf3-94c9-7b03-ba25-3bdf4def35a8",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-15-LANE-ROSTER-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-IDENTITY-EVIDENCE-CONTRACT-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-INDEPENDENT-VALIDATOR-GATES-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-ONE-TASK-ONE-PR-AGGREGATION-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-PRODUCTION-SEAL-CRITERIA-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-RESTART-CHECKPOINT-DURABILITY-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-FG-STATUS-EVIDENCE-FRESHNESS-20260909",
+        "status": "not_started",
+        "owner": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "parent_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909"
+      },
+      {
+        "project_id": "arbor",
+        "task_id": "MVP-LANE-FLEET-GOVERNANCE",
+        "status": "not_started",
+        "owner": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "parent_id": "MVP-EXECUTION-BOARD-20260909"
+      }
+    ],
+    "worklinks": [
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-804c1d0d-214d-422e-9bcb-255fed4269ea",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "mvp-projection-audit:2026-09-09",
+        "thread": "/root/mvp_projection_audit",
+        "created_at": "2026-09-09 14:43:06.670687300-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-8d2a3b46-aede-4761-ba47-c4e56cc5ebfb",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "mvp-dispatch-roster:2026-09-09",
+        "thread": "/root",
+        "created_at": "2026-09-09 15:36:49.455612600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-f7417f21-a786-4806-afa1-8645b2b064e3",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "commit",
+        "artifact_ref": "task-graph@b59cfa3",
+        "thread": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "created_at": "2026-09-09 15:39:00.311125500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-8029d523-08c0-4b9e-92d4-cfb91466274d",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "mvp-roster-partial:2026-09-09",
+        "thread": "/root",
+        "created_at": "2026-09-09 15:46:48.642086100-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-42af17d7-e347-4dac-9afe-0cb7044625a5",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "onboarding-thread-scope-ruling:2026-09-09",
+        "thread": "01a04dd5-e4c4-7220-90d4-53463939da86",
+        "created_at": "2026-09-09 15:49:03.411270600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-7778cf72-e958-4630-8874-f4ae37615aab",
+        "task_id": "MVP-GRAPH-PRODUCTION-SEAL-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "task-graph-health:2026-09-09T22:50Z",
+        "thread": "01a08727-f67e-7611-93d3-ebb64d69e17d",
+        "created_at": "2026-09-09 15:50:59.375169700-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-fb623333-4842-48a6-86e8-8aaa17ffa642",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "thread://01a088ba-d9aa-7ee2-abc1-df493cc54892",
+        "thread": "01a088ba-d9aa-7ee2-abc1-df493cc54892",
+        "created_at": "2026-09-09 17:34:06.270563400-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-a678d9d6-15b6-4389-ace5-5b93494c8358",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "thread://01a088ba-dcf1-70b3-be3a-7abacede6491",
+        "thread": "01a088ba-dcf1-70b3-be3a-7abacede6491",
+        "created_at": "2026-09-09 17:34:09.720118900-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-ae5bd685-dc17-42ee-a59e-34d4e6760389",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "thread://01a088ba-e0ed-7320-8102-a46f6b2d0cdf",
+        "thread": "01a088ba-e0ed-7320-8102-a46f6b2d0cdf",
+        "created_at": "2026-09-09 17:34:11.608873400-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-dbf4f20b-0535-4a5e-ab5a-b7d655d06cac",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "thread://01a088ba-e689-71b1-a94b-e76d40c62c5b",
+        "thread": "01a088ba-e689-71b1-a94b-e76d40c62c5b",
+        "created_at": "2026-09-09 17:34:13.112959-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-bc0275df-d10e-4b4d-b4d5-47056fd31371",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "01a08914-1469-7eb2-ad45-2291fa698d41",
+        "thread": "01a08914-1469-7eb2-ad45-2291fa698d41",
+        "created_at": "2026-09-09 19:11:00.553256500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-d48d635c-464a-442c-90d4-b64a423caecd",
+        "task_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "01a08914-1469-7eb2-ad45-2291fa698d41",
+        "thread": "01a08914-1469-7eb2-ad45-2291fa698d41",
+        "created_at": "2026-09-09 19:11:01.070160100-07"
+      },
+      {
+        "artifact_id": "LNK-c74fe26b-eb5d-4f03-8d6a-dd1f1bcfc3fd",
+        "artifact_ref": "MVP-FG-IDENTITY-EVIDENCE-CONTRACT-20260909",
+        "artifact_type": "dispatch",
+        "created_at": "2026-09-09 19:13:14.322190700-07",
+        "note": "Current Codex lane binding and selected first atomic child. Branch and full commit SHA are unavailable because this planning lane has no repository checkout; this is an explicit worklink completeness blocker, not execution evidence.",
+        "project_id": "arbor",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-680dbad1-d82e-42b0-b5db-4e5c7370eada",
+        "task_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "MVP-FG-IDENTITY-EVIDENCE-CONTRACT-20260909",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-09 19:13:14.817165600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-dcaed0d5-4466-4aab-8aa0-9d2bdbb294a3",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "checkpoint",
+        "artifact_ref": "MVP-FG-CHECKPOINT-20260910T0214Z",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-09 19:14:11.452837200-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-4aa86100-0387-4db2-b7cf-ef7c7a542ec3",
+        "task_id": "MVP-VALIDATE-FLEET-GOVERNANCE-20260910",
+        "artifact_type": "binding",
+        "artifact_ref": "01a08cf3-94c9-7b03-ba25-3bdf4def35a8",
+        "thread": "01a08cf3-94c9-7b03-ba25-3bdf4def35a8",
+        "created_at": "2026-09-10 13:13:00.091682600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-cbedf7c2-7086-4b94-9747-274dc990f35b",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "task-plan-snapshot:fp1:2026-09-10T20:17:20.89096Z",
+        "created_at": "2026-09-10 13:18:13.194303500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-39b6d5fa-7e90-48b8-9bdc-2a576d306dd4",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "dispatch-roster-audit:2026-09-10T20:20Z",
+        "created_at": "2026-09-10 13:19:13.433380300-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-5c1bb907-3035-4029-9549-30aa02a92e6a",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "dispatch-roster-sync-attempt:2026-09-10T20:27Z",
+        "created_at": "2026-09-10 13:24:00.704225500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-cae12049-3291-4a21-9aa4-b350f8ec98a9",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "remote-readiness-artifacts-missing-r3-20260910",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 14:40:19.436767400-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-c70da4b5-f918-4b30-8a33-1a6644b0c132",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "remote-readiness-artifacts-synced-r4-final-20260910",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 14:46:09.580641200-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-b30b1152-6b88-4bcc-9d67-e29843e2ee93",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "finding",
+        "artifact_ref": "dispatch-roster-thread-discovery-20260910T2148Z",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 14:48:53.645347400-07"
+      },
+      {
+        "artifact_id": "LNK-b40bff48-32c3-4c35-88f2-e7da736dd765",
+        "artifact_ref": "thread://01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "artifact_type": "binding",
+        "created_at": "2026-09-10 14:50:12.486465800-07",
+        "note": "Replacement owner task created 2026-09-10 after prior owner 01a08914-1469-7eb2-ab45-2291fa698d41 had no resolvable Codex task. Host=local; exact repo/worktree/branch/commit still to be resolved by this lane.",
+        "project_id": "arbor",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-3078e2b9-7cbc-4633-b312-08b8ab89b9b9",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "thread://01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "created_at": "2026-09-10 14:50:13.535487300-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-e715f62e-e05c-4091-9deb-b4654783a9ee",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "roster-manifest:2026-09-10",
+        "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "created_at": "2026-09-10 14:55:29.723884600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-4a950707-e435-420a-958b-33db7ec11a0b",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "checkpoint",
+        "artifact_ref": "D:\\workspace\\scratch\\MVP_FLEET_ROSTER_MANIFEST_20260910.json#AA9DFCFD4A88B0CB14FEE1545CF2961808C8B5479DE3FB33CAB4DE4FEA9ECD3D",
+        "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "created_at": "2026-09-10 14:57:25.985479900-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-71d4b06d-c7d2-48fa-b96e-9d49323cf539",
+        "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "binding",
+        "artifact_ref": "roster:FLEET-GOVERNANCE:20260910-r8",
+        "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+        "created_at": "2026-09-10 16:38:12.338366700-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-4f104108-ac84-4eb0-bb0a-8f33b3c3311c",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "checkpoint",
+        "artifact_ref": "D:/workspace/scratch/MVP_FLEET_ROSTER_MANIFEST_20260910_R8.json#1A36CFEE0498DCB840A1D7C21EF7867DAD2157C58E3FE6EF430F85992629A352",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 17:02:13.196760700-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-1a9fe2a8-8c6b-462a-a88a-955a1709db00",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "validation",
+        "artifact_ref": "C:/Users/developer/Documents/Codex/2026-09-10/mvp-roster-validation-r8/outputs/roster-validation-r8.json#E6A25B7A3A23B256329FBDCC3A730CB122E1C2CF858EA3EA4980CC9F3712E711",
+        "thread": "01a08db2-6bbe-7463-b2f9-1a5cf8867dfc",
+        "created_at": "2026-09-10 17:02:14.528086500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-bde06548-d58c-45ef-8f91-6f5f9de501b4",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "task-plan://arbor/MVP-LANE-RESTART-PROMPT-20260909",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 17:02:57.014487500-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-64b26bd5-c642-4bbc-a797-0ada04c6722d",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "task-plan://arbor/MVP-LANE-RESTART-PROMPT-20260909",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 17:02:58.093655900-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-4221ae8c-b106-4367-9f8d-19038d05702e",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "D:/workspace/MVP_EXECUTION_READINESS_20260910_R8.md#9E131595CC6129DE7E1E36028C6FAA52EDF20A6B0702DE15DD510078917F2B94",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 17:04:48.717275400-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-18eea2ba-4210-4be4-933d-52a3c1b832b7",
+        "task_id": "MVP-DECOMP-FLEET-GOVERNANCE-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "D:/workspace/scratch/mvp-plan-r13/fleet-complete-plan-brief.txt",
+        "thread": "01a08dff-71cd-7d03-99da-7e62d05ea42d",
+        "created_at": "2026-09-10 18:05:59.905015200-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-d849fc6e-2743-4f72-9040-35cbbabe43f1",
+        "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+        "artifact_type": "checkpoint",
+        "artifact_ref": "D:/workspace/scratch/resume-01a087fa/CHECKPOINT_01a087fa_resume_20260911.md#sha256=3AA685B0D5AADCF46782112FC9717C7D4B2296585DF634E47F7D15003DF8ECA5",
+        "thread": "01a087fa-9284-7873-ab05-fcb2d7d46616",
+        "created_at": "2026-09-10 18:30:33.323020200-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-f843cd2d-7624-496b-958d-f9670b90e52c",
+        "task_id": "MVP-VALIDATE-FLEET-GOVERNANCE-20260910",
+        "artifact_type": "validation",
+        "artifact_ref": "C:/Users/developer/Documents/Codex/2026-09-10/mvp-task-plan-validation-r14/outputs/task-plan-validation-r14.json#sha256=6FCF1AB37F5D3617130D8B8BFA48C65C7A529FBC36687E113F1C279D0976C6B9",
+        "thread": "claude:9cc17fc9-ddee-4678-a4b2-6a99cf2ec0a8",
+        "created_at": "2026-09-10 20:10:53.376934600-07"
+      },
+      {
+        "project_id": "arbor",
+        "artifact_id": "LNK-33b182be-7c8b-4133-b56d-d97c128a22c4",
+        "task_id": "MVP-FLEET-CONTROL-ROOM-SCOPED-BOARD-20260909",
+        "artifact_type": "dispatch",
+        "artifact_ref": "D:/workspace/MVP_EXECUTION_READINESS_20260910.md#sha256=10CDC99A1D6BC3CE7E9BB293BF171900E3D7BA3DF8621B3C996AAEF71A74176E",
+        "thread": "claude:9cc17fc9-ddee-4678-a4b2-6a99cf2ec0a8",
+        "created_at": "2026-09-10 20:21:42.045041700-07"
+      }
+    ]
+  },
+  "positive_bindings": [
+    {
+      "artifact_id": "LNK-b40bff48-32c3-4c35-88f2-e7da736dd765",
+      "artifact_ref": "thread://01a08d4c-934a-7bb2-8b03-727ff88d7092",
+      "artifact_type": "binding",
+      "created_at": "2026-09-10 14:50:12.486465800-07",
+      "note": "Replacement owner task created 2026-09-10 after prior owner 01a08914-1469-7eb2-ab45-2291fa698d41 had no resolvable Codex task. Host=local; exact repo/worktree/branch/commit still to be resolved by this lane.",
+      "project_id": "arbor",
+      "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+      "thread": "01a08d4c-934a-7bb2-8b03-727ff88d7092",
+      "repo": "task-graph",
+      "session_id": "synthetic-unique-binding-test",
+      "worktree_path": "D:/workspace/worktrees/synthetic-fg-unique",
+      "branch": "test/fg-unique",
+      "commit_sha": "665d77c4ae4208edf45a664262507860004e2c94"
+    },
+    {
+      "project_id": "arbor",
+      "artifact_id": "LNK-00000000-0000-4000-8000-000000000001",
+      "task_id": "MVP-DISPATCH-THREAD-ROSTER-20260909",
+      "artifact_type": "worktree",
+      "artifact_ref": "synthetic-roster-binding",
+      "thread": "synthetic-roster-thread",
+      "repo": "task-graph",
+      "session_id": "synthetic-unique-binding-test",
+      "worktree_path": "D:/workspace/worktrees/synthetic-fg-unique",
+      "branch": "test/fg-unique",
+      "commit_sha": "665d77c4ae4208edf45a664262507860004e2c94"
+    }
+  ],
+  "second_binding": {
+    "project_id": "arbor",
+    "artifact_id": "LNK-00000000-0000-4000-8000-000000000002",
+    "task_id": "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909",
+    "artifact_type": "worktree",
+    "artifact_ref": "synthetic-second-binding",
+    "thread": "synthetic-second-thread",
+    "repo": "task-graph",
+    "session_id": "synthetic-unique-binding-test",
+    "worktree_path": "D:/workspace/worktrees/synthetic-fg-unique-second",
+    "branch": "test/fg-unique-second",
+    "commit_sha": "665d77c4ae4208edf45a664262507860004e2c94"
+  },
+  "evidence_by_link_id": {
+    "LNK-b40bff48-32c3-4c35-88f2-e7da736dd765": {
+      "Host": "workstation-c",
+      "AccountOrHarness": "test-harness",
+      "PRorSpecRef": "task-graph/REQUIREMENTS.md#4-task-verbs",
+      "CheckpointRef": "testdata/fg-unique-checkpoint.json#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "MeasuredAt": "2026-09-11T14:02:30.609016Z"
+    },
+    "LNK-00000000-0000-4000-8000-000000000001": {
+      "Host": "workstation-c",
+      "AccountOrHarness": "test-harness",
+      "PRorSpecRef": "task-graph/REQUIREMENTS.md#4-task-verbs",
+      "CheckpointRef": "testdata/fg-unique-checkpoint.json#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "MeasuredAt": "2026-09-11T14:02:30.609016Z"
+    },
+    "LNK-00000000-0000-4000-8000-000000000002": {
+      "Host": "workstation-c",
+      "AccountOrHarness": "test-harness",
+      "PRorSpecRef": "task-graph/REQUIREMENTS.md#4-task-verbs",
+      "CheckpointRef": "testdata/fg-unique-checkpoint.json#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "MeasuredAt": "2026-09-11T14:02:30.609016Z"
+    }
+  }
+}

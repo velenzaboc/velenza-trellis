@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://velenzaboc.internal/task-graph/testdata/fg_envelope.schema.json",
+  "title": "Fleet Binding and Evidence Envelope",
+  "description": "One fleet work-identity binding/evidence envelope: the exact repository, host, harness, and checkpoint coordinates that bind a live task-graph task to the concrete work that advanced it, per MVP-EXECUTION-DISPATCH-CONTRACT-20260909's identity rule and MVP_LANE_RESTART_PROMPT_20260910_R8.md's worklink field list. Every field is required; commit_sha carries an empty string only when the envelope records a planning/evidence checkpoint that is not yet backed by a specific commit.",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "logical task-universe namespace (task-graph project_id), e.g. \"arbor\"; not the GCP project id and not the tenant organization_id"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the task-plan task canonical_name this envelope binds to, e.g. \"MVP-FG-ID-ENVELOPE-SCHEMA-20260911\""
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "normalized repository name (lowercase, hyphen-separated), e.g. \"task-graph\""
+    },
+    "host": {
+      "type": "string",
+      "enum": ["workstation-c", "workstation-a", "workstation-b"],
+      "description": "the workstation the work was performed on"
+    },
+    "account_or_harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the acting account or harness identity, e.g. \"claude\", \"codex\", or a service-account email"
+    },
+    "thread": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the fleet thread or workflow that produced this artifact"
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the producing session id"
+    },
+    "absolute_worktree": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^([A-Za-z]:[\\\\/]|/)",
+      "description": "absolute path of the worktree the work was done in; never a shared repository mirror"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the branch the work landed on"
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})?$",
+      "description": "40 lowercase hex characters (Git SHA-1) or 64 lowercase hex characters (Inarch BLAKE3 changeset ID) when this envelope is code-backed; empty string when it is not (e.g. a planning-only or evidence-only checkpoint with no accompanying commit)"
+    },
+    "pr_or_spec_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "a pull-request URL or a canonical spec/section coordinate this envelope's work is governed by or delivered through"
+    },
+    "checkpoint_ref": {
+      "type": "string",
+      "pattern": "^.+#sha256=[0-9a-f]{64}$",
+      "description": "a checkpoint file path, followed by the literal '#sha256=', followed by the 64 lowercase hex character SHA-256 digest of that checkpoint's exact bytes"
+    },
+    "measured_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$",
+      "description": "RFC3339 timestamp of when this envelope's coordinates were measured/recorded"
+    }
+  },
+  "required": [
+    "project_id",
+    "task_id",
+    "repo",
+    "host",
+    "account_or_harness",
+    "thread",
+    "session",
+    "absolute_worktree",
+    "branch",
+    "commit_sha",
+    "pr_or_spec_ref",
+    "checkpoint_ref",
+    "measured_at"
+  ],
+  "additionalProperties": false
+}
