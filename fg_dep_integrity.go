@@ -161,19 +161,15 @@ func fgDependencyNormalize(ctx context.Context, registry DependencyKindRegistry,
 		if kind == "" {
 			kind = "gates"
 		}
-		if registry != nil {
-			canonical, found := registry.Canonicalize(ctx, kind)
-			if !found {
-				return nil, FGDependencyReciprocityResult{}, fmt.Errorf("%w: dependency %q kind literal %q", ErrUnknownDependencyKind, row.DependencyID, kind)
-			}
-			descriptor, err := registry.Resolve(ctx, canonical)
-			if err != nil {
-				return nil, FGDependencyReciprocityResult{}, err
-			}
-			if !descriptor.Blocking() || descriptor.LifecycleMarker() {
-				continue
-			}
-		} else if kind != "gates" && kind != "gated_by" {
+		canonical, found := registry.Canonicalize(ctx, kind)
+		if !found {
+			return nil, FGDependencyReciprocityResult{}, fmt.Errorf("%w: dependency %q kind literal %q", ErrUnknownDependencyKind, row.DependencyID, kind)
+		}
+		descriptor, err := registry.Resolve(ctx, canonical)
+		if err != nil {
+			return nil, FGDependencyReciprocityResult{}, err
+		}
+		if !descriptor.Blocking() || descriptor.LifecycleMarker() {
 			continue
 		}
 		edge := fgDependencyEdge{id: row.DependencyID, source: row.DependsOnTaskID, target: row.TaskID}
@@ -389,16 +385,10 @@ func RunFGDependencyIntegrityCheck(ctx context.Context, statusReg TaskStatusRegi
 	if statusReg == nil {
 		return FGDependencyIntegrityResult{}, fmt.Errorf("%w: RunFGDependencyIntegrityCheck requires a non-nil TaskStatusRegistry", ErrUnknownTaskStatus)
 	}
-	if len(dependencyRegistries) > 1 {
-		return FGDependencyIntegrityResult{}, fmt.Errorf("fleet dependency integrity: at most one DependencyKindRegistry may be supplied")
+	if len(dependencyRegistries) != 1 || dependencyRegistries[0] == nil {
+		return FGDependencyIntegrityResult{}, fmt.Errorf("%w: RunFGDependencyIntegrityCheck requires exactly one non-nil DependencyKindRegistry", ErrUnknownDependencyKind)
 	}
-	var dependencyRegistry DependencyKindRegistry
-	if len(dependencyRegistries) == 1 {
-		dependencyRegistry = dependencyRegistries[0]
-		if dependencyRegistry == nil {
-			return FGDependencyIntegrityResult{}, fmt.Errorf("%w: RunFGDependencyIntegrityCheck received a nil DependencyKindRegistry", ErrUnknownDependencyKind)
-		}
-	}
+	dependencyRegistry := dependencyRegistries[0]
 	if err := fgDependencyIntegrityInput(fleetGovernance, snapshotScopeExecutionSubtree, fgRunnerFleetRoot, "fleet_governance"); err != nil {
 		return FGDependencyIntegrityResult{}, err
 	}
