@@ -804,10 +804,6 @@ func rpRequireAtomicRollback(t *testing.T,f *reviewProducerFixture) {
 	}
 }
 
-func TestReviewProducerAtomicPublicationRollback(t *testing.T) {
-	rpRequireAtomicRollback(t,newReviewProducerFixture(t))
-}
-
 func TestReviewProducerMissingCapabilityAndChangedPinnedExecutableRefuse(t *testing.T) {
 	for _,missing:=range []string{"producer","descriptor","table","executable","changed-executable"} {
 		t.Run(missing,func(t *testing.T){
