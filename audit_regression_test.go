@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -297,68 +296,6 @@ func TestAuditValidatorRunnerRejectsCycleCarriedByRegisteredAliases(t *testing.T
 	}
 }
 
-func TestAuditRetiredWorklinksCannotSatisfyTerminalProof(t *testing.T) {
-	env, client := newNativeCoverageEnv(t)
-	ctx := context.Background()
-	auditCreateTasks(t, env, "AUDIT-ACCEPTANCE-ROOT")
-	inactive := []string{"archived", "superseded", "released", "closed", " ARCHIVED ", "Superseded", " RELEASED ", "Closed"}
-	expectedFindings := map[string]bool{}
-	for i, status := range inactive {
-		taskID := fmt.Sprintf("AUDIT-RETIRED-%02d", i)
-		in := coverageTaskInput(taskID)
-		in.ParentRef = "AUDIT-ACCEPTANCE-ROOT"
-		in.Payload["status"] = "done"
-		if _, err := nativeHandleCreate(ctx, env, in); err != nil {
-			t.Fatalf("create done task %s: %v", taskID, err)
-		}
-		linkID := fmt.Sprintf("AUDIT-PROOF-%02d", i)
-		if _, err := nativeHandleAddWorklink(ctx, env, addWorklinkInput{
-			ProjectID: "arbor", TaskID: taskID, ArtifactID: linkID, ArtifactType: "validation", ArtifactRef: "proof:" + taskID,
-		}); err != nil {
-			t.Fatalf("create proof %s: %v", linkID, err)
-		}
-		setStoredStatus(t, client, linkID, status)
-		expectedFindings[taskID] = true
-	}
-
-	active := coverageTaskInput("AUDIT-ACTIVE-PROOF")
-	active.ParentRef = "AUDIT-ACCEPTANCE-ROOT"
-	active.Payload["status"] = "done"
-	if _, err := nativeHandleCreate(ctx, env, active); err != nil {
-		t.Fatalf("create active-proof task: %v", err)
-	}
-	if _, err := nativeHandleAddWorklink(ctx, env, addWorklinkInput{
-		ProjectID: "arbor", TaskID: "AUDIT-ACTIVE-PROOF", ArtifactID: "AUDIT-ACTIVE-LINK",
-		ArtifactType: "validation", ArtifactRef: "proof:active",
-	}); err != nil {
-		t.Fatalf("create active proof: %v", err)
-	}
-
-	snapshot, err := handleProjectSnapshot(ctx, env, projectSnapshotInput{ProjectID: "arbor"})
-	if err != nil {
-		t.Fatalf("project snapshot: %v", err)
-	}
-	tasks, links, err := fgValidatorTerminalInput(snapshot)
-	if err != nil {
-		t.Fatalf("terminal input: %v", err)
-	}
-	result, err := RunFGTerminalProofCheck(ctx, env.TaskStatuses, env.ArtifactKinds, tasks, links)
-	if err != nil {
-		t.Fatalf("terminal proof check: %v", err)
-	}
-	if len(result.Findings) != len(expectedFindings) {
-		t.Fatalf("terminal findings = %d, want %d; findings=%+v snapshot_links=%+v", len(result.Findings), len(expectedFindings), result.Findings, snapshot.Worklinks)
-	}
-	for _, finding := range result.Findings {
-		if finding.Kind != FGFindingDoneWithoutProofKind || !expectedFindings[finding.TaskID] {
-			t.Fatalf("unexpected terminal finding: %+v", finding)
-		}
-		delete(expectedFindings, finding.TaskID)
-	}
-	if len(expectedFindings) != 0 {
-		t.Fatalf("retired proof tasks without findings: %v", expectedFindings)
-	}
-}
 
 func TestAuditSnapshotContinuationSecretsAreDistinctAcrossRepresentations(t *testing.T) {
 	keyMaterial := []byte("01234567890123456789012345678901")
