@@ -104,7 +104,7 @@ func fgRunnerGoodInput(t *testing.T) FGValidatorRunnerInput {
 		evidence[link.ArtifactID] = ev
 	}
 	board := fgRunnerSeal(t, snapshotScopeExecutionSubtree, fgRunnerBoardRoot, boardTasks, boardLinks)
-	return FGValidatorRunnerInput{
+	in := FGValidatorRunnerInput{
 		SchemaVersion:   1,
 		TaskStatuses:    []TaskStatusDescriptor{fgRunnerDescriptor("not_started", false), fgRunnerDescriptor("in_progress", false), fgRunnerDescriptor("done", true)},
 		ArtifactKinds:   []ArtifactKindDescriptor{fgRunnerArtifact("binding"), fgRunnerArtifact("worktree"), fgRunnerArtifact("blocker", "blocker_evidence"), fgRunnerArtifact("finding"), fgRunnerArtifact("validation")},
@@ -114,6 +114,8 @@ func fgRunnerGoodInput(t *testing.T) FGValidatorRunnerInput {
 			Repo: "task-graph", SHA: proof.CommitSHA, Ref: "origin/main", Class: FGFreshnessReachable,
 		}}},
 	}
+	registry, _, _ := auditDependencyRegistry(t)
+	return auditAttachDependencyRegistry(t, in, registry)
 }
 
 func fgRunnerReseal(t *testing.T, snapshot *ProjectSnapshotResult) {

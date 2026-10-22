@@ -443,10 +443,19 @@ func resolveSnapshotContinuation(config *SnapshotContinuationConfig, bearerSecre
 	if len(key) < sha256.Size {
 		return nil, 0, fmt.Errorf("configured key environment variable %q decodes to %d bytes; at least %d required", config.KeyEnv, len(key), sha256.Size)
 	}
-	if bearerSecret != "" && len(key) == len(bearerSecret) && subtle.ConstantTimeCompare(key, []byte(bearerSecret)) == 1 {
+	if bearerSecret != "" && continuationKeyMatchesBearer(key, bearerSecret) {
 		return nil, 0, fmt.Errorf("snapshot continuation key must differ from transport bearer secret")
 	}
 	return key, time.Duration(config.TTLSeconds) * time.Second, nil
+}
+
+func continuationKeyMatchesBearer(key []byte, bearerSecret string) bool {
+	raw := []byte(bearerSecret)
+	if len(key) == len(raw) && subtle.ConstantTimeCompare(key, raw) == 1 {
+		return true
+	}
+	decoded, err := base64.StdEncoding.DecodeString(bearerSecret)
+	return err == nil && len(key) == len(decoded) && subtle.ConstantTimeCompare(key, decoded) == 1
 }
 
 func transportHandler(mcpHandler http.Handler, bearerSecret string) http.Handler {

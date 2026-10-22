@@ -1333,19 +1333,33 @@ func nativeGuardGenericWorklinkUpdate(ctx context.Context, tx *spanner.ReadWrite
 	return nil
 }
 
-// nativeActiveWorklinkPredicate selects the ACTIVE worklinks a consumer may
-// count: neither an erroneous archived row nor a binding that a successor has
-// superseded. Superseded rows stay readable as task history through
-// task_graph_worklinks and task_graph_get.
-const nativeActiveWorklinkPredicate = `(artifact_status IS NULL OR artifact_status NOT IN ('archived', 'superseded'))`
-
 // nativeBindingArtifactTypes are the artifact types that reserve a branch or
 // worktree for a task. It mirrors the identity guard's protected set.
 var nativeBindingArtifactTypes = map[string]bool{"worktree": true, "binding": true, "branch": true}
 
-// nativeInactiveWorklinkStatuses are the statuses under which a binding row no
-// longer reserves anything, mirroring the guard's active-binding test.
-var nativeInactiveWorklinkStatuses = map[string]bool{"archived": true, "superseded": true, "released": true, "closed": true}
+// nativeInactiveWorklinkStatusNames is the single lifecycle set shared by
+// in-memory binding checks and snapshot SQL. Both paths normalize case and
+// surrounding whitespace before membership testing.
+var nativeInactiveWorklinkStatusNames = []string{"archived", "superseded", "released", "closed"}
+
+var nativeInactiveWorklinkStatuses = func() map[string]bool {
+	statuses := make(map[string]bool, len(nativeInactiveWorklinkStatusNames))
+	for _, status := range nativeInactiveWorklinkStatusNames {
+		statuses[status] = true
+	}
+	return statuses
+}()
+
+// nativeActiveWorklinkPredicate selects the ACTIVE worklinks a consumer may
+// count. Inactive rows stay readable as task history through
+// task_graph_worklinks and task_graph_get.
+var nativeActiveWorklinkPredicate = func() string {
+	quoted := make([]string, 0, len(nativeInactiveWorklinkStatusNames))
+	for _, status := range nativeInactiveWorklinkStatusNames {
+		quoted = append(quoted, "'"+status+"'")
+	}
+	return `(artifact_status IS NULL OR LOWER(TRIM(artifact_status)) NOT IN (` + strings.Join(quoted, ", ") + `))`
+}()
 
 // ErrWorklinkSupersedeConflict is the sentinel for a supersede request that
 // lost to, or contradicts, a transition another caller already committed.
@@ -2372,26 +2386,6 @@ func nativeLinkWorklinkToTask(ctx context.Context, env *Env, projectID, linkID, 
 }
 
 func nativeLinkParent(ctx context.Context, env *Env, projectID, parentID, childID string) (MutationWriteResult, error) {
-	adapter, err := soleNativeFleetPlanAdapter(ctx, env)
-	if err != nil || adapter == nil {
-		return MutationWriteResult{}, err
-	}
-	client, err := adapter.getClient(ctx)
-	if err != nil {
-		return MutationWriteResult{}, err
-	}
-	_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *spanner.ReadWriteTransaction) error {
-		if err := nativeRequireTaskInProject(ctx, tx, adapter, projectID, parentID); err != nil {
-			return err
-		}
-		if err := nativeRequireTaskInProject(ctx, tx, adapter, projectID, childID); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return MutationWriteResult{}, err
-	}
 	return nativeUpdateTaskFields(ctx, env, projectID, childID, map[string]interface{}{"parent_id": parentID})
 }
 
@@ -2460,6 +2454,77 @@ func nativeTaskUpdateParam(column string, value interface{}) interface{} {
 	return nativeParam(value)
 }
 
+func nativeRequestedParent(fields map[string]interface{}) (string, bool, error) {
+	value, present := fields["parent_id"]
+	if !present {
+		return "", false, nil
+	}
+	if value == nil {
+		return "", true, nil
+	}
+	parentID, ok := value.(string)
+	if !ok {
+		return "", true, fmt.Errorf("task parent_id must be a string or null, got %T", value)
+	}
+	return parentID, true, nil
+}
+
+func nativeGuardTaskOwnershipTuple(fields map[string]interface{}, owner, sessionID, repo string) error {
+	for _, field := range []struct {
+		name    string
+		current string
+	}{
+		{name: "owner", current: owner},
+		{name: "session_id", current: sessionID},
+		{name: "repo", current: repo},
+	} {
+		value, present := fields[field.name]
+		if !present {
+			continue
+		}
+		requested, ok := value.(string)
+		if !ok || requested != field.current {
+			return fmt.Errorf("task %s may change only through task_graph_claim or task_graph_reown", field.name)
+		}
+	}
+	return nil
+}
+
+// nativeValidateParentAssignmentTx proves that parentID exists in the same
+// project and that following its parent chain cannot reach childID. The reads
+// share the transaction with the eventual child update, so a Spanner retry
+// revalidates the tree against the winning concurrent write.
+func nativeValidateParentAssignmentTx(ctx context.Context, tx *spanner.ReadWriteTransaction, adapter *SpannerSubstrateAdapter, projectID, childID, parentID string) error {
+	if parentID == "" {
+		return nil
+	}
+	visited := map[string]bool{childID: true}
+	for current := parentID; current != ""; {
+		if visited[current] {
+			return fmt.Errorf("setting task %q parent to %q would create a parent cycle", childID, parentID)
+		}
+		visited[current] = true
+		iter := tx.Query(ctx, spanner.Statement{
+			SQL:    `SELECT parent_id FROM ` + adapter.Descriptor.TaskTable + ` WHERE ` + adapter.projectWhereAnd() + `id = @id LIMIT 1`,
+			Params: map[string]interface{}{"project_id": projectID, "id": current},
+		})
+		row, err := iter.Next()
+		iter.Stop()
+		if err == iterator.Done {
+			return fmt.Errorf("task %q not found in project %q", current, projectID)
+		}
+		if err != nil {
+			return fmt.Errorf("read parent chain task %q in project %q: %w", current, projectID, err)
+		}
+		var next spanner.NullString
+		if err := row.Columns(&next); err != nil {
+			return fmt.Errorf("decode parent of task %q: %w", current, err)
+		}
+		current = nullStringValue(next)
+	}
+	return nil
+}
+
 func nativeUpdateTaskFields(ctx context.Context, env *Env, explicitProjectID, taskID string, fields map[string]interface{}) (MutationWriteResult, error) {
 	adapter, err := soleNativeFleetPlanAdapter(ctx, env)
 	if err != nil || adapter == nil {
@@ -2471,6 +2536,10 @@ func nativeUpdateTaskFields(ctx context.Context, env *Env, explicitProjectID, ta
 	}
 	if len(fields) == 0 {
 		return MutationWriteResult{}, fmt.Errorf("no task fields supplied")
+	}
+	requestedParent, checkParentWrite, err := nativeRequestedParent(fields)
+	if err != nil {
+		return MutationWriteResult{}, err
 	}
 	// status is a SECOND write path into Tasks.status alongside
 	// nativeHandleCreate — task_graph_set_status, task_graph_reown (which
@@ -2519,38 +2588,35 @@ func nativeUpdateTaskFields(ctx context.Context, env *Env, explicitProjectID, ta
 	}
 	var rows int64
 	_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *spanner.ReadWriteTransaction) error {
+		readStmt := spanner.Statement{
+			SQL:    `SELECT owner, session_id, repo, status FROM ` + adapter.Descriptor.TaskTable + ` WHERE ` + adapter.projectWhereAnd() + `id = @id LIMIT 1`,
+			Params: map[string]interface{}{"project_id": projectID, "id": taskID},
+		}
+		iter := tx.Query(ctx, readStmt)
+		row, readErr := iter.Next()
+		iter.Stop()
+		if readErr == iterator.Done {
+			return fmt.Errorf("task %q not found in project %q", taskID, projectID)
+		}
+		if readErr != nil {
+			return fmt.Errorf("read task %q in project %q for update: %w", taskID, projectID, readErr)
+		}
+		var currentOwner, currentStatus string
+		var currentSession, currentRepo spanner.NullString
+		if err := row.Columns(&currentOwner, &currentSession, &currentRepo, &currentStatus); err != nil {
+			return fmt.Errorf("decode task %q for update: %w", taskID, err)
+		}
+		if err := nativeGuardTaskOwnershipTuple(fields, currentOwner, nullStringValue(currentSession), nullStringValue(currentRepo)); err != nil {
+			return err
+		}
 		if checkStatusWrite {
-			// Read the CURRENT status inside the same transaction and let
-			// checkTaskStatusWrite (registries.go) decide: a status-
-			// preserving write (incoming == stored literal, canonical or
-			// legacy) is unconditionally legal; a status CHANGE must name a
-			// canonical member and satisfy the transition graph evaluated
-			// from the stored literal's Canonicalize'd member — the live
-			// Tasks table still carries pre-registry legacy literals
-			// (completed/gap/resolved/…) on rows this store deliberately
-			// does not migrate via DML (see the reconciliation table in
-			// task-graph.config.json). A task not found here is NOT an
-			// error — fall through and let the UPDATE below affect zero
-			// rows, preserving the existing "not found" error shape from
-			// the post-update check.
-			readStmt := spanner.Statement{
-				SQL:    `SELECT status FROM ` + adapter.Descriptor.TaskTable + ` WHERE ` + adapter.projectWhereAnd() + `id = @id LIMIT 1`,
-				Params: map[string]interface{}{"project_id": projectID, "id": taskID},
+			if err := checkTaskStatusWrite(ctx, env.TaskStatuses, taskID, currentStatus, newStatusLiteral); err != nil {
+				return err
 			}
-			iter := tx.Query(ctx, readStmt)
-			row, readErr := iter.Next()
-			iter.Stop()
-			if readErr != nil && readErr != iterator.Done {
-				return fmt.Errorf("read current status of task %q in project %q: %w", taskID, projectID, readErr)
-			}
-			if readErr == nil {
-				var currentLiteral string
-				if err := row.Columns(&currentLiteral); err != nil {
-					return fmt.Errorf("decode current status of task %q: %w", taskID, err)
-				}
-				if err := checkTaskStatusWrite(ctx, env.TaskStatuses, taskID, currentLiteral, newStatusLiteral); err != nil {
-					return err
-				}
+		}
+		if checkParentWrite {
+			if err := nativeValidateParentAssignmentTx(ctx, tx, adapter, projectID, taskID, requestedParent); err != nil {
+				return err
 			}
 		}
 		n, err := tx.Update(ctx, spanner.Statement{SQL: sql, Params: params})
