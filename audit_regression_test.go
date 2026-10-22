@@ -14,14 +14,19 @@ import (
 
 func auditReadTask(t *testing.T, env *Env, taskID string) Node {
 	t.Helper()
-	node, found, err := nativeReadTaskNode(context.Background(), nativeCoverageAdapter(t, env), "arbor", taskID)
+	adapter := nativeCoverageAdapter(t, env)
+	// Read the stored fields under assertion directly. The in-memory Spanner
+	// fixture cannot evaluate the timestamp CASTs used by the public projection.
+	result, err := adapter.ExecuteReadOnlyQuery(context.Background(),
+		`SELECT owner, session_id, repo, parent_id FROM `+adapter.Descriptor.TaskTable+` WHERE `+adapter.projectWhereAnd()+`id = @id`,
+		map[string]interface{}{"project_id": "arbor", "id": taskID})
 	if err != nil {
 		t.Fatalf("read task %s: %v", taskID, err)
 	}
-	if !found {
-		t.Fatalf("task %s not found", taskID)
+	if len(result.Rows) != 1 {
+		t.Fatalf("task %s read returned %d rows, want 1", taskID, len(result.Rows))
 	}
-	return node
+	return Node{CurrentVersion: NodeVersion{Payload: result.Rows[0]}}
 }
 
 func TestAuditGenericTaskUpdateCannotChangeOwnershipTuple(t *testing.T) {
