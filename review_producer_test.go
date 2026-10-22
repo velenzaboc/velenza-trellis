@@ -55,6 +55,9 @@ type reviewProducerFixture struct {
 	repo, revision, head, productionBody, ownerBody, control, capture string
 	executionID, recordedWorktree string
 	project string
+	// The in-memory SQL fake cannot infer timestamp CAST projections. Only
+	// its observers read simple persisted columns; real-tier observers use MCP.
+	fakeObserver bool
 	note map[string]any
 	request map[string]any
 }
@@ -238,7 +241,9 @@ func newReviewProducerFixtureForProject(t *testing.T,project string) *reviewProd
 	if err != nil { t.Fatal(err) }
 	if err := op.Wait(context.Background()); err != nil { t.Fatal(err) }
 	t.Setenv("SPANNER_EMULATOR_HOST","localhost:9010")
-	return rpSourceFixtureForProject(t,client,nativeCoverageDatabase,project)
+	fixture:=rpSourceFixtureForProject(t,client,nativeCoverageDatabase,project)
+	fixture.fakeObserver=true
+	return fixture
 }
 
 // The REAL cmdMCP client uses the unchanged allowed localhost:9010 authority.
@@ -348,12 +353,38 @@ func (f *reviewProducerFixture) rows() []map[string]any {
 }
 
 func (f *reviewProducerFixture) noteFor(taskID string) map[string]any {
+	var note map[string]any
+	if err:=json.Unmarshal([]byte(f.noteTextFor(taskID)),&note);err!=nil {f.t.Fatal(err)}
+	return note
+}
+
+func (f *reviewProducerFixture) noteTextFor(taskID string) string {
 	project:=f.project;if taskID==f.executionID {project="arbor"}
+	if f.fakeObserver {
+		ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+		row,err:=f.client.Single().ReadRow(ctx,"Tasks",spanner.Key{project,taskID},[]string{"note"})
+		if err!=nil {f.t.Fatal(err)}
+		var note spanner.NullString
+		if err:=row.Columns(&note);err!=nil {f.t.Fatal(err)}
+		return nullStringValue(note)
+	}
 	node:=f.allow("task_graph_get",map[string]any{"project_id":project,"node_id":taskID})
 	payload:=node["current_version"].(map[string]any)["payload"].(map[string]any)
-	var note map[string]any
-	if err:=json.Unmarshal([]byte(payload["note"].(string)),&note);err!=nil {f.t.Fatal(err)}
-	return note
+	return payload["note"].(string)
+}
+
+func (f *reviewProducerFixture) taskObservation(taskID string) map[string]any {
+	project:=f.project;if taskID==f.executionID {project="arbor"}
+	if !f.fakeObserver {return map[string]any{"observer":"actual-mcp-task-get","node":f.allow("task_graph_get",map[string]any{"project_id":project,"node_id":taskID})}}
+	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+	// Observe the complete persisted row, without pretending it is a generic
+	// MCP projection. All mutations and producer/process calls still use MCP.
+	iter:=f.client.Single().Query(ctx,spanner.Statement{SQL:`SELECT project_id,id,title,pillar,layer,status,owner,parent_id,is_gap,note,created_at,updated_at,gap_label,session_id,repo,is_critical_path,started_at,done_at FROM Tasks WHERE project_id = @project_id AND id = @id`,Params:map[string]any{"project_id":project,"id":taskID}})
+	defer iter.Stop()
+	result,err:=collectQueryResult(iter)
+	if err!=nil {f.t.Fatal(err)}
+	if len(result.Rows)!=1 {f.t.Fatalf("persisted Task observer expected one row: %#v",result)}
+	return map[string]any{"observer":"actual-persisted-task-row","row":result.Rows[0]}
 }
 
 func (f *reviewProducerFixture) taskNote() map[string]any { return f.noteFor(f.executionID) }
@@ -431,8 +462,7 @@ func TestReviewProducerRequiresRealProcessAndImmutableSource(t *testing.T) {
 	if !reflect.DeepEqual(approval["requirements"],slot["tests"].(map[string]any)["requirements"]) || len(approval["evidence"].([]any))==0 {t.Fatal("legacy validation requirement/evidence projection is incomplete")}
 	// These fixture receipt fields are ASCII and contain no HTML escaping;
 	// compacting the exact stored object preserves JSON.stringify's key order.
-	node:=f.allow("task_graph_get",map[string]any{"project_id":"arbor","node_id":"REVIEW-TASK"})
-	storedNote:=node["current_version"].(map[string]any)["payload"].(map[string]any)["note"].(string)
+	storedNote:=f.noteTextFor("REVIEW-TASK")
 	var rawNote map[string]json.RawMessage;if err:=json.Unmarshal([]byte(storedNote),&rawNote);err!=nil {t.Fatal(err)}
 	var compact bytes.Buffer;if err:=json.Compact(&compact,rawNote["validation_acceptance"]);err!=nil {t.Fatal(err)}
 	if acceptance["sha256"]!=rpDigest(compact.Bytes()) {t.Fatal("controller does not bind the separately stored leaf approval hash")}
@@ -567,9 +597,9 @@ func TestReviewProducerGenericMutationCannotManufactureAcceptance(t *testing.T) 
 			forged:=rpClone(t,original);target:=forged;if path[0]!="validation_acceptance" {target=f.slot(forged)}
 			for _,part:=range path[:len(path)-1] {target=target[part].(map[string]any)}
 			target[path[len(path)-1]]=f.forgedProtectedValue(path,mode,oldLeaf,oldController)
-			before:=f.allow("task_graph_get",map[string]any{"project_id":"arbor","node_id":id})
+			before:=f.taskObservation(id)
 			f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":id,"payload":map[string]any{"note":string(rpJSON(t,forged)),"title":"must roll back too"}})
-			if !reflect.DeepEqual(before,f.allow("task_graph_get",map[string]any{"project_id":"arbor","node_id":id})){t.Fatal("forgery partially mutated Task")}
+			if !reflect.DeepEqual(before,f.taskObservation(id)){t.Fatal("forgery partially mutated Task")}
 			createID:="FORGED-TASK";if id==f.executionID {createID="EXECUTION-QUEUE-forged-session"}
 			if path[0]=="validation_acceptance" {approval:=forged["validation_acceptance"].(map[string]any);approval["task_id"]=createID;approval["review_ref"].(map[string]any)["task_id"]=createID}
 			// Isolate this exact protected path in create/import too. Otherwise

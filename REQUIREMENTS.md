@@ -303,7 +303,9 @@ worktree without changing its binding identity or execution coordinates:
 
 `task_graph_review_produce` and `task_graph_review_get` extend the existing
 configured native service with one exclusive immutable evidence table. They
-do not create another task/queue ledger, signer, identity framework, workflow
+own software review origin. Circuit validation keeps its existing hash-based
+runtime handoff below; neither operation is a circuit release prerequisite.
+They do not create another task/queue ledger, signer, identity framework, workflow
 service or scheduler. The table is additional evidence, not a second admission
 copy of `Tasks`, `TaskLinks` or `TaskDeps`. The writer-handover and supersede
 contracts above, including their historical identifiers and note meanings,
@@ -493,9 +495,9 @@ identity/collision, stale generation or ambiguous state refuses without overwrit
 Concurrent identical requests converge on one accepted origin; different requests
 cannot win the same identity. Transaction retries never rerun an external review.
 
-**Protect actual mutation boundaries.** Generic Task create/import/update and
+**Protect actual software mutation boundaries.** Generic Task create/import/update and
 every note-writing transaction refuse caller manufacture, alteration or deletion
-of leaf root `validation_acceptance`; controller slot `tests.acceptance`, `acceptance`,
+of software leaf root `validation_acceptance`; software controller slot `tests.acceptance`, `acceptance`,
 `tdd_red_receipt`, `tests.tdd_audit_receipt`, `tdd_green_receipt` and
 `reopen_history`. Apply the same rule to array and legacy singleton slots at
 their exact structural paths, including an array-valued `reopen_history`. A
@@ -503,12 +505,65 @@ changed surrounding note cannot erase the
 protection. Unchanged protected get/update echo and ordinary metadata/project
 queue bookkeeping remain allowed; arbitrary prose containing "review" does
 not become protected authority. Typed producer publication is the narrow owner
-of review acceptance. Existing held TDD labels/files are historical data and do
+of software review acceptance. Existing held TDD labels/files are historical data and do
 not become valid server origin; this service does not implement the TDD helper.
 Refuse generic protected-field writes with `REVIEW_ORIGIN_REQUIRED` before
 generic admission/backend or shape failures can masquerade as an origin guard.
 Correctly shaped caller-authored, cross-bound and replayed approvals/references
 remain untrusted. A path/hash to a plausible local receipt does not prove origin.
+
+**Preserve the existing circuit bookkeeping boundary.** Higher native
+WORKFLOW `project_queues.validation_evidence` and `runtime_assignments` also
+use `validation_acceptance` and `tests.acceptance` for circuits. Their existing
+file-hash handoff must remain recordable without a Git revision, CI, PR,
+software merge, configured software reviewer or software evidence table.
+Those fields are workflow metadata, never software review origin, executed
+runtime validation, signatures, admission or post-admission proof.
+
+The narrow generic preservation door is an existing native Task update, checked
+in the actual mutation transaction. Plain Task/slot creation stays available;
+create/import cannot grant an exemption from a caller-supplied kind or note.
+Resolve the actual leaf in the exact project, its sole coherent canonical
+worktree binding, and the configured-default-project
+`EXECUTION-QUEUE-<binding.session_id>` controller with matching recorded session.
+There must be exactly one prior registered active slot for that physical
+worktree/repository; match its leaf/project/binding coordinates, including any
+existing slot ID. Resolve the actual delivery Task through its recorded
+`project_queue` scope and validate its full circuit plan: schema, exact project
+and delivery ID, epoch/context, all five distinct circuit queue owners, and
+`admission.ceremony=node.save` plus a nonempty post-admission check. Missing,
+contradictory, duplicate, cross-project, software or caller-labelled-only context
+refuses. A proposed note cannot mint its own prior assignment context.
+
+Only the circuit leaf's `validation_acceptance` and that circuit slot's
+`tests.acceptance` use this door. The validation review is recorded while the
+registered slot is `review-validation`; its normal transition to `author-circuit`
+may publish the hash reference in the same controller update. Validate the
+existing shared receipt schema, project/leaf/context, nonempty distinct
+author/reviewer, zero blockers, complete files/requirements/coverage/evidence,
+and the three boundary flags against the registered hash-only test handoff.
+`tests.acceptance={task_id,sha256}` must resolve that same leaf's current
+validation receipt and its exact JSON.stringify hash. Changed file hashes need
+renewed review. A hash mismatch, other leaf/project/context/files or replay
+from another path refuses. The controller transition preserves disjoint slots
+and unrelated metadata. No Git test revision is required or inferred.
+
+Any changed before/after software `review_ref` remains protected, even if a
+caller relabels a plan or slot as circuit. An unchanged software slot may coexist
+with a legitimate disjoint circuit slot; its origin/reference is preserved.
+Circuit receipts cannot carry software `review_ref`, overwrite software
+publication, create exclusive origin rows, substitute candidate acceptance for
+software review, or satisfy software progression. Software consumers always
+resolve exact origin through `task_graph_review_get`; labels and legacy notes
+never grant that capability. Schema-v1/generic imports cannot manufacture this
+native context. Ordinary metadata and unchanged protected echo keep working.
+
+Existing circuit `candidate_files`/`candidate_acceptance`/`validation_evidence`
+bookkeeping remains usable for `validate-circuit` and `admit-circuit` under the
+native hash-based runtime contract. The owner oracle/validator, lawful names,
+stable references, required signatures, `node.save`, protected typed rows,
+ArtifactAdmissionLog and post-admission verification remain mandatory. This
+preservation door introduces no circuit release service or software gate.
 
 A fixture-only reopened test generation can retain separately verified prior
 production proof when its actual production bytes remain unchanged and its
@@ -525,8 +580,8 @@ leaf/controller project or Task, controller/binding session, selected slot,
 binding, revision/base, epoch, context or kind; tampered/incomplete output;
 stale/replayed generation; and missing producer/table capability refuse. Generic
 node-ID collisions and ordinary worklinks never mask or replace exclusive
-evidence. Old tools/readers or a rollback that lacks this capability must fail
-closed at consuming hooks; no legacy-note bootstrap trust is permitted. An old
+evidence. Software tools/readers or a rollback that lacks this capability must fail
+closed at software consuming hooks; no legacy-note bootstrap trust is permitted. An old
 generic writer cannot mint rows in the new exclusive table. Ordinary tasks and
 existing writer/succession history keep their semantics and usability.
 
