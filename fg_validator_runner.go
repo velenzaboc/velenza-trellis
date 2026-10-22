@@ -53,6 +53,7 @@ type FGValidatorFreshnessInput struct {
 type FGValidatorRunnerInput struct {
 	SchemaVersion   int                                   `json:"schema_version"`
 	TaskStatuses    []TaskStatusDescriptor                `json:"task_statuses"`
+	DependencyKinds []DependencyKindDescriptor            `json:"dependency_kinds"`
 	ArtifactKinds   []ArtifactKindDescriptor              `json:"artifact_kinds"`
 	Snapshots       FGValidatorSnapshotInputs             `json:"snapshots"`
 	BindingEvidence map[string]FGValidatorBindingEvidence `json:"binding_evidence"`
@@ -389,12 +390,24 @@ func RunFGValidatorRunner(ctx context.Context, in FGValidatorRunnerInput) (FGVal
 			return FGValidatorRunnerResult{}, err
 		}
 	}
+	if len(in.DependencyKinds) == 0 {
+		return FGValidatorRunnerResult{}, fmt.Errorf("%w: fg validator runner requires dependency_kinds", ErrUnknownDependencyKind)
+	}
+	for i, d := range in.DependencyKinds {
+		if err := d.Validate(i); err != nil {
+			return FGValidatorRunnerResult{}, err
+		}
+	}
 	for i, d := range in.ArtifactKinds {
 		if err := d.Validate(i); err != nil {
 			return FGValidatorRunnerResult{}, err
 		}
 	}
 	statusReg, err := newTaskStatusRegistry(in.TaskStatuses)
+	if err != nil {
+		return FGValidatorRunnerResult{}, err
+	}
+	dependencyReg, err := newDependencyKindRegistry(in.DependencyKinds)
 	if err != nil {
 		return FGValidatorRunnerResult{}, err
 	}
@@ -412,7 +425,7 @@ func RunFGValidatorRunner(ctx context.Context, in FGValidatorRunnerInput) (FGVal
 	if err := fgValidatorPreflightSnapshot("board", in.Snapshots.Board, project, snapshotScopeExecutionSubtree, fgRunnerBoardRoot); err != nil {
 		return FGValidatorRunnerResult{}, err
 	}
-	dependencyIntegrity, err := RunFGDependencyIntegrityCheck(ctx, statusReg, in.Snapshots.FleetGovernance, in.Snapshots.Board)
+	dependencyIntegrity, err := RunFGDependencyIntegrityCheck(ctx, statusReg, in.Snapshots.FleetGovernance, in.Snapshots.Board, dependencyReg)
 	if err != nil {
 		return FGValidatorRunnerResult{}, err
 	}
@@ -485,6 +498,9 @@ func cmdFGValidatorRunner(ctx context.Context, args []string, stdout io.Writer) 
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(out); err != nil {
 		return fmt.Errorf("fg-validator-runner encode output: %w", err)
+	}
+	if !out.Passed {
+		return fmt.Errorf("fg-validator-runner validation failed")
 	}
 	return nil
 }

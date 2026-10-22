@@ -152,7 +152,7 @@ func fgDependencyTaskID(id string) bool {
 	return true
 }
 
-func fgDependencyNormalize(rows []DependencyRow) ([]fgDependencyEdge, FGDependencyReciprocityResult) {
+func fgDependencyNormalize(ctx context.Context, registry DependencyKindRegistry, rows []DependencyRow) ([]fgDependencyEdge, FGDependencyReciprocityResult, error) {
 	result := FGDependencyReciprocityResult{Passed: true, Findings: []FGDependencyReciprocityFinding{}}
 	byID := map[string]fgDependencyEdge{}
 	conflicted := map[string]bool{}
@@ -161,7 +161,19 @@ func fgDependencyNormalize(rows []DependencyRow) ([]fgDependencyEdge, FGDependen
 		if kind == "" {
 			kind = "gates"
 		}
-		if kind != "gates" && kind != "gated_by" {
+		if registry != nil {
+			canonical, found := registry.Canonicalize(ctx, kind)
+			if !found {
+				return nil, FGDependencyReciprocityResult{}, fmt.Errorf("%w: dependency %q kind literal %q", ErrUnknownDependencyKind, row.DependencyID, kind)
+			}
+			descriptor, err := registry.Resolve(ctx, canonical)
+			if err != nil {
+				return nil, FGDependencyReciprocityResult{}, err
+			}
+			if !descriptor.Blocking() || descriptor.LifecycleMarker() {
+				continue
+			}
+		} else if kind != "gates" && kind != "gated_by" {
 			continue
 		}
 		edge := fgDependencyEdge{id: row.DependencyID, source: row.DependsOnTaskID, target: row.TaskID}
@@ -195,7 +207,7 @@ func fgDependencyNormalize(rows []DependencyRow) ([]fgDependencyEdge, FGDependen
 	sort.Slice(result.Findings, func(i, j int) bool { return result.Findings[i].DependencyID < result.Findings[j].DependencyID })
 	result.LogicalEdgeCount = len(edges)
 	result.Passed = len(result.Findings) == 0
-	return edges, result
+	return edges, result, nil
 }
 
 func fgDependencyDirection(ctx context.Context, statusReg TaskStatusRegistry, tasks []TaskRow, edges []fgDependencyEdge) (FGDependencyDirectionResult, error) {
@@ -370,12 +382,22 @@ func fgDependencyCycle(edges []fgDependencyEdge) FGDependencyCycleResult {
 // RunFGDependencyIntegrityCheck is a pure read-side check over two caller-
 // supplied coherent snapshots. FleetGovernance defines exactly the judged task
 // and dependency set. Board is used only as a parent lookup for those tasks.
-func RunFGDependencyIntegrityCheck(ctx context.Context, statusReg TaskStatusRegistry, fleetGovernance, board ProjectSnapshotResult) (FGDependencyIntegrityResult, error) {
+func RunFGDependencyIntegrityCheck(ctx context.Context, statusReg TaskStatusRegistry, fleetGovernance, board ProjectSnapshotResult, dependencyRegistries ...DependencyKindRegistry) (FGDependencyIntegrityResult, error) {
 	if err := ctx.Err(); err != nil {
 		return FGDependencyIntegrityResult{}, err
 	}
 	if statusReg == nil {
 		return FGDependencyIntegrityResult{}, fmt.Errorf("%w: RunFGDependencyIntegrityCheck requires a non-nil TaskStatusRegistry", ErrUnknownTaskStatus)
+	}
+	if len(dependencyRegistries) > 1 {
+		return FGDependencyIntegrityResult{}, fmt.Errorf("fleet dependency integrity: at most one DependencyKindRegistry may be supplied")
+	}
+	var dependencyRegistry DependencyKindRegistry
+	if len(dependencyRegistries) == 1 {
+		dependencyRegistry = dependencyRegistries[0]
+		if dependencyRegistry == nil {
+			return FGDependencyIntegrityResult{}, fmt.Errorf("%w: RunFGDependencyIntegrityCheck received a nil DependencyKindRegistry", ErrUnknownDependencyKind)
+		}
 	}
 	if err := fgDependencyIntegrityInput(fleetGovernance, snapshotScopeExecutionSubtree, fgRunnerFleetRoot, "fleet_governance"); err != nil {
 		return FGDependencyIntegrityResult{}, err
@@ -383,7 +405,10 @@ func RunFGDependencyIntegrityCheck(ctx context.Context, statusReg TaskStatusRegi
 	if err := fgDependencyIntegrityInput(board, snapshotScopeExecutionSubtree, fgRunnerBoardRoot, "board"); err != nil {
 		return FGDependencyIntegrityResult{}, err
 	}
-	edges, reciprocity := fgDependencyNormalize(fleetGovernance.Dependencies)
+	edges, reciprocity, err := fgDependencyNormalize(ctx, dependencyRegistry, fleetGovernance.Dependencies)
+	if err != nil {
+		return FGDependencyIntegrityResult{}, err
+	}
 	direction, err := fgDependencyDirection(ctx, statusReg, fleetGovernance.Tasks, edges)
 	if err != nil {
 		return FGDependencyIntegrityResult{}, err
