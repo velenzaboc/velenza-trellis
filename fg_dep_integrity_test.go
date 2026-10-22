@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,6 +26,16 @@ func fgDepStatusRegistry(t *testing.T) TaskStatusRegistry {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	return reg
+}
+
+func fgDepDependencyRegistry(t *testing.T) DependencyKindRegistry {
+	t.Helper()
+	cfg := loadRealTaskGraphConfig(t)
+	reg, err := newDependencyKindRegistry(cfg.DependencyKinds)
+	if err != nil {
+		t.Fatalf("build dependency kind registry from task-graph.config.json: %v", err)
 	}
 	return reg
 }
@@ -93,7 +104,7 @@ func TestFGDepIntegrityHistoricalPreimageExactEightInversions(t *testing.T) {
 		fgDepRow("DEP-29e9848f-f016-5cf0-b93c-9e519b0ae24f", "MVP-FG-PRODUCTION-SEAL-CRITERIA-20260909", "MVP-FG-INDEPENDENT-VALIDATOR-GATES-20260909", "gates"),
 	}
 	fg, board := fgDepSnapshots(tasks, rows)
-	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +148,7 @@ func TestFGDepIntegrityGrammarLastValidAndExcludedText(t *testing.T) {
 		fgDepTask("B", fgRunnerFleetRoot, "L4", "not_started", ""),
 	}
 	fg, board := fgDepSnapshots(tasks, []DependencyRow{fgDepRow("DEP-B", "B", "GROUP", "gates")})
-	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +165,7 @@ func TestFGDepIntegrityMissingAndCanonicalStatusExceptions(t *testing.T) {
 		fgDepTask("ARCHIVED", fgRunnerFleetRoot, "L5", "archived", "leaf_prerequisites=MISSING"),
 	}
 	fg, board := fgDepSnapshots(tasks, nil)
-	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +174,7 @@ func TestFGDepIntegrityMissingAndCanonicalStatusExceptions(t *testing.T) {
 	}
 
 	fg.Tasks[1].Status = "unknown"
-	if _, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board); err == nil {
+	if _, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t)); err == nil {
 		t.Fatal("unknown status did not fail closed")
 	}
 }
@@ -176,7 +187,7 @@ func TestFGDepIntegrityReciprocityConflictCycleAndAncestry(t *testing.T) {
 			fgDepTask("B", fgRunnerFleetRoot, "L5", "not_started", "leaf_prerequisites=A"),
 		}
 		fg, board := fgDepSnapshots(tasks, []DependencyRow{fgDepRow("DEP-1", "A", "B", "gates"), fgDepRow("DEP-1", "A", "B", "gated_by")})
-		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +199,7 @@ func TestFGDepIntegrityReciprocityConflictCycleAndAncestry(t *testing.T) {
 	t.Run("incompatible_projection", func(t *testing.T) {
 		tasks := []TaskRow{fgDepTask(fgRunnerFleetRoot, fgRunnerBoardRoot, "L2", "not_started", "")}
 		fg, board := fgDepSnapshots(tasks, []DependencyRow{fgDepRow("DEP-X", "A", "B", "gates"), fgDepRow("DEP-X", "A", "C", "gated_by")})
-		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +215,7 @@ func TestFGDepIntegrityReciprocityConflictCycleAndAncestry(t *testing.T) {
 			fgDepTask("B", fgRunnerFleetRoot, "L5", "not_started", "leaf_prerequisites=A"),
 		}
 		fg, board := fgDepSnapshots(tasks, []DependencyRow{fgDepRow("D1", "A", "B", "gates"), fgDepRow("D2", "B", "A", "gates")})
-		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+		got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +246,7 @@ func TestFGDepIntegrityReciprocityConflictCycleAndAncestry(t *testing.T) {
 			fg, board := fgDepSnapshots(tasks, nil)
 			board.Tasks = append(board.Tasks, fgDepTask("MVP-LANE-DIRECT", fgRunnerBoardRoot, "L1", "not_started", ""))
 			tc.edit(&board)
-			got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+			got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -319,11 +330,11 @@ func TestFGDepIntegrityR15DerivedPositiveReplayAndCancelled(t *testing.T) {
 	board.Tasks = append(board.Tasks,
 		fgDepTask("MVP-DECOMP-FLEET-GOVERNANCE-20260909", "MVP-ACTIVATE-FLEET-GOVERNANCE-20260909", "L3", "not_started", ""),
 		fgDepTask("MVP-ACTIVATE-FLEET-GOVERNANCE-20260909", fgRunnerFleetRoot, "L2", "in_progress", ""))
-	first, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+	first, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board)
+	second, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,5 +345,36 @@ func TestFGDepIntegrityR15DerivedPositiveReplayAndCancelled(t *testing.T) {
 	}
 	if len(groups) != 6 || len(leaves) != 17 {
 		t.Fatalf("R15 selector drifted: groups=%d leaves=%d", len(groups), len(leaves))
+	}
+}
+
+func TestFGDepIntegrityRequiresConfiguredDependencyKindRegistry(t *testing.T) {
+	tasks := []TaskRow{fgDepTask(fgRunnerFleetRoot, fgRunnerBoardRoot, "L2", "not_started", "")}
+	fg, board := fgDepSnapshots(tasks, nil)
+
+	if _, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board); !errors.Is(err, ErrUnknownDependencyKind) {
+		t.Fatalf("omitted dependency registry error = %v, want ErrUnknownDependencyKind", err)
+	}
+	if _, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, nil); !errors.Is(err, ErrUnknownDependencyKind) {
+		t.Fatalf("nil dependency registry error = %v, want ErrUnknownDependencyKind", err)
+	}
+}
+
+func TestFGDepIntegrityConfiguredBlockingAliasParticipatesInCycleCheck(t *testing.T) {
+	tasks := []TaskRow{
+		fgDepTask(fgRunnerFleetRoot, fgRunnerBoardRoot, "L2", "not_started", ""),
+		fgDepTask("A", fgRunnerFleetRoot, "L5", "not_started", "leaf_prerequisites=B"),
+		fgDepTask("B", fgRunnerFleetRoot, "L5", "not_started", "leaf_prerequisites=A"),
+	}
+	fg, board := fgDepSnapshots(tasks, []DependencyRow{
+		fgDepRow("D1", "A", "B", "hard"),
+		fgDepRow("D2", "B", "A", "hard"),
+	})
+	got, err := RunFGDependencyIntegrityCheck(context.Background(), fgDepStatusRegistry(t), fg, board, fgDepDependencyRegistry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cycle.Passed || !reflect.DeepEqual(got.Cycle.Path, []string{"A", "B", "A"}) {
+		t.Fatalf("blocking alias cycle result: %+v", got.Cycle)
 	}
 }

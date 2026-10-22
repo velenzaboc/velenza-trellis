@@ -21,11 +21,31 @@ import (
 
 const auditSpannerCommitMethod = "/google.spanner.v1.Spanner/Commit"
 
+func auditNativeProjectEnvWithValidationArtifact(t *testing.T) *Env {
+	t.Helper()
+	env := nativeProjectEnv(t)
+	realConfig := loadRealTaskGraphConfig(t)
+	for _, kind := range realConfig.ArtifactKinds {
+		if kind.Name() != "validation" {
+			continue
+		}
+		env.Config.ArtifactKinds = append(env.Config.ArtifactKinds, kind)
+		registry, err := newArtifactKindRegistry(env.Config.ArtifactKinds)
+		if err != nil {
+			t.Fatalf("build audit artifact kind registry: %v", err)
+		}
+		env.ArtifactKinds = registry
+		return env
+	}
+	t.Fatal("task-graph.config.json carries no validation artifact kind")
+	return nil
+}
+
 func TestAuditRetiredWorklinksCannotSatisfyTerminalProof(t *testing.T) {
 	requireEmulator(t)
 	ctx := context.Background()
 	setupEmulatorDBWithSchema(ctx, t, nativeProjectSchema)
-	env := nativeProjectEnv(t)
+	env := auditNativeProjectEnvWithValidationArtifact(t)
 	auditInstallOfficialEmulatorClient(t, env, nil)
 	t.Cleanup(func() { _ = env.Substrates.Close() })
 	adapter, err := soleNativeFleetPlanAdapter(ctx, env)
