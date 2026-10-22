@@ -129,12 +129,17 @@ func reviewProtectedProjection(value interface{}) (map[string]interface{}, error
 			for _, key := range []string{"acceptance", "tdd_audit_receipt"} { if v, exists := tests[key]; exists { protected["tests."+key] = v } }
 		}
 		if len(protected) == 0 { continue }
-		identity := []interface{}{slot["project_id"], slot["task_id"], slot["repo"], slot["worktree"], slot["slot_id"]}
-		key, _ := json.Marshal(identity)
-		if _, exists := out["slot:"+string(key)]; exists { return nil, fmt.Errorf("duplicate protected execution slot") }
-		out["slot:"+string(key)] = protected
+		key := reviewProtectedSlotKey(slot)
+		if _, exists := out[key]; exists { return nil, fmt.Errorf("duplicate protected execution slot") }
+		out[key] = protected
 	}
 	return out, nil
+}
+
+func reviewProtectedSlotKey(slot map[string]interface{}) string {
+	identity := []interface{}{slot["project_id"], slot["task_id"], slot["repo"], slot["worktree"], slot["slot_id"]}
+	key, _ := json.Marshal(identity)
+	return "slot:"+string(key)
 }
 
 func guardReviewNoteWrite(before, after interface{}) error {

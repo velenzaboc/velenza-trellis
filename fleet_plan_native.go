@@ -2528,7 +2528,7 @@ func nativeUpdateTaskFields(ctx context.Context, env *Env, explicitProjectID, ta
 			if readErr != nil && readErr != iterator.Done { return readErr }
 			var stored spanner.NullString
 			if readErr == nil { if err := row.Columns(&stored); err != nil { return err } }
-			if err := guardReviewNoteWrite(nullStringValue(stored), incoming); err != nil { return err }
+			if err := guardNativeReviewTaskWrite(ctx, tx, adapter, env, projectID, taskID, nullStringValue(stored), incoming, fields); err != nil { return err }
 		}
 		if checkStatusWrite {
 			// Read the CURRENT status inside the same transaction and let
