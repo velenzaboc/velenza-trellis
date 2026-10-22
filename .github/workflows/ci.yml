@@ -31,3 +31,72 @@ jobs:
 
       - name: Test
         run: go test -race -count=1 ./...
+
+      - name: Review origin integration with real Spanner emulator
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_name="harness-review-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+          scratch_dir="$(mktemp -d "${RUNNER_TEMP:?}/${container_name}.XXXXXX")"
+          cid_file="$scratch_dir/container.id"
+          cleanup() {
+            local result=$?
+            trap - EXIT INT TERM
+            set +e
+            if [[ -s "$cid_file" ]]; then
+              local container_id remaining
+              container_id="$(<"$cid_file")"
+              if [[ "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+                if ! timeout 15s docker container rm --force "$container_id"; then
+                  echo "Failed to remove owned emulator $container_id" >&2
+                  result=1
+                fi
+                if ! remaining="$(timeout 10s docker container ls --all --quiet --no-trunc --filter "id=$container_id")"; then
+                  echo "Could not verify owned emulator removal" >&2
+                  result=1
+                elif [[ -n "$remaining" ]]; then
+                  echo "Owned emulator remains after cleanup: $remaining" >&2
+                  result=1
+                fi
+              else
+                echo "Invalid owned container ID; refusing cleanup by name" >&2
+                result=1
+              fi
+            fi
+            if ! rm -f "$cid_file" || ! rmdir "$scratch_dir"; then
+              echo "Could not remove owned emulator scratch directory" >&2
+              result=1
+            fi
+            exit "$result"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
+          docker container create --cidfile "$cid_file" --name "$container_name" \
+            --publish 127.0.0.1:9010:9010 --publish 127.0.0.1:9020:9020 \
+            gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+          container_id="$(<"$cid_file")"
+          present="$(timeout 10s docker container ls --all --quiet --no-trunc --filter "id=$container_id")"
+          if [[ "$present" != "$container_id" ]]; then
+            echo "Could not verify the newly created emulator" >&2
+            exit 1
+          fi
+          docker container start "$container_id"
+          ready=false
+          for attempt in {1..30}; do
+            # Wait for both the REST responder and the gRPC listener.
+            if curl --silent --show-error --max-time 2 --output /dev/null http://127.0.0.1:9020/ \
+              && timeout 2s bash -c 'exec 3<>/dev/tcp/127.0.0.1/9010'; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then
+            timeout 10s docker container logs "$container_id" || true
+            echo "Spanner emulator readiness deadline exceeded" >&2
+            exit 1
+          fi
+          SPANNER_EMULATOR_HOST=localhost:9010 go test -tags=integration . -run '^TestIntegrationReviewProducer' -count=1
