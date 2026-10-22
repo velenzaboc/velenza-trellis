@@ -48,6 +48,7 @@ func reviewCircuitNoteChange(ctx context.Context, tx *spanner.ReadWriteTransacti
 		if incoming, exists := fields[key]; exists && incoming != value { return fmt.Errorf("protected publication changes Task %s", key) }
 	}
 	keys := map[string]bool{}
+	allowed := map[string]bool{}
 	for key := range old { keys[key] = true }
 	for key := range next { keys[key] = true }
 	for key := range keys {
@@ -59,6 +60,7 @@ func reviewCircuitNoteChange(ctx context.Context, tx *spanner.ReadWriteTransacti
 			if state.Slot["queue"] != "review-validation" || !reviewEqual(newNote["project_queue"], stored.Note["project_queue"]) { return fmt.Errorf("circuit review requires its prior review-validation scope") }
 			if err := reviewCircuitValidateReceipt(next[key], state); err != nil { return err }
 			delete(old, key); delete(next, key)
+			allowed[key] = true
 			continue
 		}
 		oldSlot, err := reviewCircuitFindSlot(oldNote, key)
@@ -91,9 +93,35 @@ func reviewCircuitNoteChange(ctx context.Context, tx *spanner.ReadWriteTransacti
 				if len(protected) == 0 { delete(projection,key) }
 			}
 		}
+		allowed[key] = true
 	}
 	if !reviewEqual(old,next) { return fmt.Errorf("write also changes software acceptance or protected lineage") }
+	// A caller's stale whole-note snapshot must not overwrite concurrent
+	// metadata or a disjoint slot while publishing the circuit handoff. Ordinary
+	// edits with unchanged protected fields still take the initial echo door.
+	prior, err := reviewCircuitPublicationRemainder(oldNote,allowed)
+	if err != nil { return err }
+	proposed, err := reviewCircuitPublicationRemainder(newNote,allowed)
+	if err != nil { return err }
+	if !reviewEqual(prior,proposed) { return fmt.Errorf("circuit publication must preserve current unrelated metadata and disjoint slots") }
 	return nil
+}
+
+func reviewCircuitPublicationRemainder(note map[string]interface{}, allowed map[string]bool) (map[string]interface{},error) {
+	encoded, err := reviewJSON(note)
+	if err != nil { return nil,err }
+	var copy map[string]interface{}
+	if err := reviewStrictJSON(encoded,&copy); err != nil { return nil,err }
+	for key := range allowed {
+		if key == "validation_acceptance" { delete(copy,key); continue }
+		slot, err := reviewCircuitFindSlot(copy,key)
+		if err != nil { return nil,err }
+		delete(slot,"queue")
+		tests, ok := slot["tests"].(map[string]interface{})
+		if !ok { return nil,fmt.Errorf("circuit publication tests missing") }
+		delete(tests,"acceptance")
+	}
+	return copy,nil
 }
 
 func reviewCircuitHasReference(value interface{}) bool {
