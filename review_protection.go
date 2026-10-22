@@ -56,7 +56,7 @@ func reviewStrictJSON(data []byte, target interface{}) error {
 // not: a second differently cased name must not shadow the actual field.
 func reviewExactStructKeys(value interface{}, target reflect.Type) error {
 	if target == nil { return fmt.Errorf("missing review decode target") }
-	for target.Kind() == reflect.Pointer { target = target.Elem() }
+	for target.Kind() == reflect.Ptr { target = target.Elem() }
 	if value == nil { return nil }
 	switch target.Kind() {
 	case reflect.Struct:
