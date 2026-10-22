@@ -371,6 +371,21 @@ func cmdMCP(ctx context.Context, _ []string) error {
 		},
 	)
 
+	mcp.AddTool(server,
+		&mcp.Tool{Name:"task_graph_review_produce", Description:`Run a fresh administrator-pinned independent no-tools reviewer on the exact recorded native leaf/controller/binding and immutable frozen source. Only the service's actual successful process output can atomically create exclusive immutable review origin and publish its bound acceptance. Missing capability, caller findings/commands, stale or ambiguous inputs refuse. This does not execute or attest RED/GREEN tests.`},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in reviewInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			out,err := handleReviewProduce(ctx,env,in)
+			return textResult(out,err),out,err
+		},
+	)
+	mcp.AddTool(server,
+		&mcp.Tool{Name:"task_graph_review_get", Description:`Resolve an exact review_ref from the exclusive native evidence table. Verify current leaf/controller/binding/slot/frozen source and producer generation, actual captured process output and strict result. Generic notes, local receipts, version1 and reviewer labels never establish origin. Wrong scope, stale/replayed/tampered evidence or missing capability refuses.`},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in reviewInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			out,err := handleReviewGet(ctx,env,in)
+			return textResult(out,err),out,err
+		},
+	)
+
 	// Streamable HTTP transport per the MCP 2025-11-25 spec. The SDK's
 	// StreamableHTTPHandler is an http.Handler; we serve it from a plain
 	// net/http.Server bound to cfg.ListenAddress.
