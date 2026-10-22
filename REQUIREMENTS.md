@@ -127,7 +127,8 @@ DDL cannot be applied to the live `task-plan` database by accident.
 `experimental_query_enabled`), `task_graph_import` (bulk topologically-ordered
 admission — the migration + reseed surface), `task_graph_health`.
 
-**Task-domain verbs** (10 — `task_queries.go`; in `fleet_plan_native` mode a
+**Task-domain verbs** (12 — `task_queries.go` and the bounded native review
+producer; in `fleet_plan_native` mode a
 task's business fields are the live `Tasks` columns; in schema_v1 migrated
 mode they live inside `Nodes.content` JSON):
 
@@ -143,8 +144,10 @@ mode they live inside `Nodes.content` JSON):
 | `task_graph_set_status` | update a task's status inside one project, every other field preserved |
 | `task_graph_reown` | atomically compare-and-set a task's owner/session/repository binding inside one project, preserving every non-binding field; an owned current task requires its exact expected tuple even when releasing to `UNOWNED`, which clears session/repository; the optional native-only `writer_handover` moves the sole existing protected worktree writer in the same transaction |
 | `task_graph_claim` | atomically claim an empty/`UNOWNED` task for one owner/session/repository tuple; concurrent claimers resolve first-writer-wins, exact durable-tuple retries are idempotent, and only the acquiring transaction may attest optional execution coordinates |
+| `task_graph_review_produce` | execute one server-controlled independent no-tools review of exact frozen native task/slot/source inputs, then atomically insert exclusive immutable origin evidence and publish its bound acceptance reference; native mode only |
+| `task_graph_review_get` | resolve that exclusive origin by exact project/review/task/slot/input identity, validate its strict kind and current frozen generation, and refuse legacy notes, stale inputs or unavailable producer capability; native mode only |
 
-Total: **24 verbs**.
+Total: **26 verbs**.
 
 `task_graph_project_snapshot` is the reusable application read boundary. It
 accepts a logical `project_id`, a bounded row limit, and an optional typed
@@ -295,6 +298,154 @@ worktree without changing its binding identity or execution coordinates:
 - **Receipts identify the durable transition.** The result includes the native
   mutation receipt and `writer_handover_receipt`, naming the stable binding and
   history link ids, old and new writer coordinates, row count and idempotency.
+
+### Independent review origin in the existing native service
+
+`task_graph_review_produce` and `task_graph_review_get` extend the existing
+configured native service with one exclusive immutable evidence table. They
+do not create another task/queue ledger, signer, identity framework, workflow
+service or scheduler. The table is additional evidence, not a second admission
+copy of `Tasks`, `TaskLinks` or `TaskDeps`. The writer-handover and supersede
+contracts above, including their historical identifiers and note meanings,
+remain unchanged. Neither operation invokes reown or stores review under
+`writer_handover_history=`.
+
+**Typed wire identity.** Both operations accept exactly these JSON fields:
+
+| Field | Meaning |
+|---|---|
+| `project_id` | logical native task project, resolved by the existing adapter |
+| `task_id` | actual task containing the selected execution slot |
+| `slot_id` | exact slot identity, never a fuzzy session or worktree match |
+| `binding_link_id` | exact current canonical native worktree binding |
+| `kind` | `validate_tests` or `production`, with no substitution between them |
+| `revision` | immutable source revision of the frozen input, verified against actual recorded source |
+| `epoch`, `context_sha256` | exact project-queue generation of that slot |
+| `review_id` | project-scoped request/retry identity, not caller authority |
+
+Unknown fields, including commands, executable/argument/environment overrides,
+findings files, supplied findings, reviewer labels and `verified`, are refused.
+The server resolves the actual task, exactly one selected slot and canonical
+binding, authoritative frozen file/test hashes and requirement boundaries.
+`note.queue_assignments` is an array of slot objects; historical
+`note.queue_assignment` is a singleton object. Both obey the same protections;
+ambiguous, missing, contradictory or duplicate slot/binding selections refuse.
+An explicit `slot_id` identifies the slot; source worktree and repository must
+also match its recorded binding. Shared child session IDs are permitted but
+never authenticate an individual reviewer or prove independence.
+
+The response to either operation is a JSON object with `schema_version` equal
+to `velenza_review_result/1`, the exact request identity fields above,
+`input_sha256`, `producer_generation`, `result` (the actual strict child result),
+`review_ref` and `idempotent`. `review_ref` is the structured identity
+`{project_id,review_id,task_id,slot_id,binding_link_id,kind,revision,epoch,
+context_sha256,input_sha256,producer_generation}`. It is resolved through the
+typed get operation, never treated as a signature or accepted inline.
+`idempotent=true` identifies an exact completed retry/readback. Generic node
+version1, `admitted_by`, ordinary mutation receipts, timestamps and local paths
+do not authenticate this result.
+
+**Administrator configuration and source.** The native substrate descriptor
+adds `review_evidence_table`, explicitly naming the dedicated table. The
+server-only `review_producer` configuration contains `generation`, absolute
+`executable`, `executable_sha256`, fixed `args`, positive bounded
+`timeout_milliseconds` and `max_output_bytes`, and `repositories` entries
+`{repo,path,requirements_path}`. Repository roots and the pinned executable are
+administrator-controlled, not request-derived. This uses existing digests for
+byte identity and introduces no signing claim or new cryptographic choice.
+Validate the complete configured descriptor and producer before use. An
+unconfigured producer/table may leave ordinary bookkeeping available, but both
+review operations and affected protected progression refuse. A configured
+missing table or unavailable producer never falls back to notes or local files.
+
+Acquire files through verified immutable source, including committed Git
+objects rather than dirty working-tree bytes. Resolve any Inarch revision only
+through its existing authoritative verified-source path; an unavailable or
+unverified provider refuses. Check every selected test/owner hash and legal
+relative path/type against the frozen revision. Absolute/parent escape paths,
+missing source, mismatched hashes and caller revision labels are not accepted
+as source evidence. Supply the full governing requirement and assertion/source
+bundle as data; mutable notes alone do not establish source authority.
+
+**Real producer boundary.** Launch a fresh independent no-tools reviewer
+process using the administrator's pinned executable/configuration and fixed
+argv, directly, without a shell. The caller selects no executable, flags or
+environment. Reuse the sanctioned independent review invocation with tools
+disabled. A shared MCP bearer authorizes requests; it does not prove a distinct
+human/agent identity. Capture the actual child stdin/stdout/stderr/exit through
+service-owned resources. Never reread a caller-writable receipt or accept the
+local helper's record mode as execution. Missing launch, timeout, nonzero exit,
+truncation, oversize, malformed/duplicate/ambiguous JSON or incomplete coverage
+refuses publication. Inputs are untrusted data, not reviewer instructions.
+
+The child's stdin JSON bundle contains `kind`, `input_sha256`, exact bound
+identity, committed requirements and full source/file contents with hashes.
+Its stdout is one strict object with `schema_version` equal to
+`velenza_independent_review/1`, matching `kind` and `input_sha256`, complete
+`requirements`, `coverage`, `blocking`, `production_boundary`, `tautologies`,
+`fixture_supplied_authority` and `summary`. `blocking` is an array; acceptance
+requires it empty, `production_boundary=true`, `tautologies=false` and
+`fixture_supplied_authority=false`. Coverage maps each requirement to named
+`path`, `case`, `assertion`, actual `boundary` and `scenario` (`positive`,
+`refusal` or `exception`); explain inapplicable scenarios in the review rather
+than silently omit requirements. Compare this mapping with the real committed
+assertions and governing requirement scope. A zero count or different reviewer
+string alone is insufficient. The server records what actually ran and returned;
+this establishes process origin, not infallibility of a model's judgment.
+
+**Exclusive immutable storage.** Key review evidence by exact
+`(project_id,review_id)`. The candidate physical shape is `project_id`,
+`review_id`, `task_id`, `slot_id`, `kind`, `input_sha256`, `binding_json`,
+`result_json`, `producer_generation` and `created_at`; `binding_json` contains
+the exact bound request, frozen source and protected generation, while
+`result_json` preserves the actual strict result. Table identifiers remain in
+the validated substrate descriptor. The candidate test DDL provisions this
+shape only inside isolated tests. Actual DDL belongs to the sanctioned schema
+deployment path, never MCP query, import or a hand-applied live SQL command.
+Only successful service-controlled producer completion inserts origin rows.
+Generic create/import/update/link/archive/query cannot mint or change them.
+Never backfill authority from valid-looking legacy Task/TaskLinks notes.
+
+**One publication transaction.** Resolve coherent inputs before review; run
+the external process OUTSIDE a retried database transaction. Then one short
+native transaction rereads and compares the exact task/selected-slot/binding/
+frozen-input generation, inserts immutable evidence and publishes its accepted
+reference atomically. For `validate_tests`, publish the actual server-produced
+`note.validation_acceptance` with `review_ref` and selected slot
+`tests.acceptance={task_id,sha256,review_ref}`; preserve the existing validation
+receipt schema/consumer hash convention for compatibility, while origin always
+requires typed resolution. For `production`, publish selected slot
+`acceptance` with its `revision`, `blocking=0` and exact `review_ref`. Local
+evidence paths and hashes remain historical data, never origin substitutes.
+Preserve unrelated metadata and all disjoint slots. A failure after evidence
+insertion or acceptance publication rolls back both. An exact completed retry
+reads the same result without rerunning the reviewer; changed input, conflicting
+identity/collision, stale generation or ambiguous state refuses without overwrite.
+Concurrent identical requests converge on one accepted origin; different requests
+cannot win the same identity. Transaction retries never rerun an external review.
+
+**Protect actual mutation boundaries.** Generic Task create/import/update and
+every note-writing transaction refuse caller manufacture, alteration or deletion
+of root `validation_acceptance`; selected slot `tests.acceptance`, `acceptance`,
+`tdd_red_receipt`, `tests.tdd_audit_receipt`, `tdd_green_receipt` and
+`reopen_history`. Apply the same rule to array and legacy singleton slots at
+their exact structural paths. A changed surrounding note cannot erase the
+protection. Unchanged protected get/update echo and ordinary metadata/project
+queue bookkeeping remain allowed; arbitrary prose containing "review" does
+not become protected authority. Typed producer publication is the narrow owner
+of review acceptance. Existing held TDD labels/files are historical data and do
+not become valid server origin; this service does not implement the TDD helper.
+
+**Typed reads and compatibility.** Typed get reads the configured exclusive
+table directly and validates the strict stored schema, producer capability,
+kind, complete binding and actual current recorded frozen source. Wrong project,
+task, slot, binding, revision, epoch, context or kind; tampered/incomplete output;
+stale/replayed generation; and missing producer/table capability refuse. Generic
+node-ID collisions and ordinary worklinks never mask or replace exclusive
+evidence. Old tools/readers or a rollback that lacks this capability must fail
+closed at consuming hooks; no legacy-note bootstrap trust is permitted. An old
+generic writer cannot mint rows in the new exclusive table. Ordinary tasks and
+existing writer/succession history keep their semantics and usability.
 
 Native dependency identity is one `TaskDeps.dep_id` for the normalized
 `(project_id, gates_source_id, gates_target_id, gates)` relationship. Both
