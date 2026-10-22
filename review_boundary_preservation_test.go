@@ -132,14 +132,14 @@ func TestReviewBoundaryCircuitDoorRequiresActualRegisteredContext(t *testing.T) 
 			note:=f.noteFor(c.delivery);plan:=note["project_queues"].(map[string]any)
 			switch change {case "missing-plan":delete(note,"project_queues");case "software-plan":plan["kind"]="software";case "wrong-project-plan":plan["project_id"]="other-project";case "stale-plan":plan["epoch"]="stale";case "missing-owner":plan["owners"]=plan["owners"].([]any)[:4];case "duplicate-owner":plan["owners"].([]any)[1].(map[string]any)["ref"]=plan["owners"].([]any)[0].(map[string]any)["ref"];case "wrong-admission":plan["admission"].(map[string]any)["ceremony"]="software-merge"}
 			f.updateNoteFor(c.delivery,note)
-		} else if change=="wrong-controller-session" {f.allow("task_graph_update",map[string]any{"project_id":"arbor","node_id":f.executionID,"payload":map[string]any{"session_id":"other-session"}})} else {
+		} else if change=="wrong-controller-session" {f.allow("task_graph_update",f.taskUpdate("arbor",f.executionID,map[string]any{"session_id":"other-session"}))} else {
 			note:=f.taskNote();slot:=c.slot(note)
 			switch change {case "wrong-slot-scope":slot["project_queue"].(map[string]any)["project_id"]="other-project";case "caller-kind-only":slot["kind"]="circuit";slot["project_queue"]=nil;case "missing-slot":note["queue_assignments"]=note["queue_assignments"].([]any)[:1];case "duplicate-worktree-slot":duplicate:=rpClone(t,slot);duplicate["task_id"]="caller-shadow";delete(duplicate["tests"].(map[string]any),"acceptance");note["queue_assignments"]=append(note["queue_assignments"].([]any),duplicate)}
 			f.updateNote(note)
 		}
 		leaf:=f.noteFor(c.leaf);renewed=rpClone(t,c.receipt);renewed["evidence"]=[]any{"new review must resolve actual context"};leaf["validation_acceptance"]=renewed
 		before:=f.taskObservation(c.leaf)
-		f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":c.leaf,"payload":map[string]any{"note":string(rpJSON(t,leaf)),"title":"must not partially persist"}})
+		f.denyOrigin("task_graph_update",f.taskUpdate("arbor",c.leaf,map[string]any{"note":string(rpJSON(t,leaf)),"title":"must not partially persist"}))
 		if !reflect.DeepEqual(before,f.taskObservation(c.leaf)) || len(f.rows())!=1 {t.Fatal("invalid context changed leaf or exclusive origin")}
 	})}
 }
@@ -150,14 +150,14 @@ func TestReviewBoundaryCircuitReceiptAndReferenceBinding(t *testing.T) {
 		bad:=rpClone(t,c.receipt)
 		switch change {case "project":bad["project_id"]="other-project";case "task":bad["task_id"]="other-leaf";case "context":bad["context_sha256"]=strings.Repeat("a",64);case "files":bad["files"].([]any)[0].(map[string]any)["sha256"]=strings.Repeat("a",64);case "author":bad["author"]="other-author";case "reviewer-is-author":bad["reviewer"]=bad["author"];case "blocking":bad["blocking"]=1;case "flags":bad["fixture_supplied_authority"]=true;case "missing-coverage":bad["coverage"]=[]any{};case "software-ref":bad["review_ref"]=rpClone(t,f.request)}
 		leaf:=f.noteFor(c.leaf);leaf["validation_acceptance"]=bad
-		f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":c.leaf,"payload":map[string]any{"note":string(rpJSON(t,leaf))}})
+		f.denyOrigin("task_graph_update",f.taskUpdate("arbor",c.leaf,map[string]any{"note":string(rpJSON(t,leaf))}))
 		if !reflect.DeepEqual(f.noteFor(c.leaf)["validation_acceptance"],rpClone(t,c.receipt)) {t.Fatal("invalid circuit receipt replaced accepted hash metadata")}
 	})}
 	for _,change:=range []string{"wrong-task","wrong-hash","software-reference","stale-files"} {t.Run("reference-"+change,func(t *testing.T){
 		f:=newReviewProducerFixture(t);c:=rpCircuitFixture(t,f,false);c.publishReview()
 		note:=f.taskNote();slot:=c.slot(note);slot["queue"]="author-circuit";acceptance:=map[string]any{"task_id":c.leaf,"sha256":c.approvalHash()};slot["tests"].(map[string]any)["acceptance"]=acceptance
 		switch change {case "wrong-task":acceptance["task_id"]="other-leaf";case "wrong-hash":acceptance["sha256"]=strings.Repeat("a",64);case "software-reference":acceptance["review_ref"]=rpClone(t,f.request);case "stale-files":slot["tests"].(map[string]any)["files"].([]any)[0].(map[string]any)["sha256"]=strings.Repeat("a",64)}
-		before:=f.taskObservation(f.executionID);f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":f.executionID,"payload":map[string]any{"note":string(rpJSON(t,note))}})
+		before:=f.taskObservation(f.executionID);f.denyOrigin("task_graph_update",f.taskUpdate("arbor",f.executionID,map[string]any{"note":string(rpJSON(t,note))}))
 		if !reflect.DeepEqual(before,f.taskObservation(f.executionID)) || len(f.rows())!=0 {t.Fatal("cross-bound reference changed controller or minted software origin")}
 	})}
 }
@@ -169,7 +169,7 @@ func TestReviewBoundaryCircuitMetadataNeverSuppliesSoftwareOrigin(t *testing.T) 
 	leaf:=f.leafNote();leaf["kind"]="circuit"
 	softwareTests:=f.slot(f.taskNote())["tests"].(map[string]any)
 	leaf["validation_acceptance"]=rpCircuitValidation(t,"arbor","REVIEW-TASK",strings.Repeat("c",64),softwareTests)
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":"REVIEW-TASK","payload":map[string]any{"note":string(rpJSON(t,leaf))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("arbor","REVIEW-TASK",map[string]any{"note":string(rpJSON(t,leaf))}))
 	software:=f.allow("task_graph_review_produce",f.request)
 	before:=f.rows()
 	// Valid circuit bookkeeping has no exclusive row; a circuit/legacy label
@@ -177,9 +177,9 @@ func TestReviewBoundaryCircuitMetadataNeverSuppliesSoftwareOrigin(t *testing.T) 
 	request:=rpClone(t,f.request);request["task_id"]=c.leaf;request["binding_link_id"]=c.binding;request["epoch"]=c.scope["epoch"];request["context_sha256"]=c.scope["context_sha256"];request["review_id"]="circuit-legacy-review"
 	f.deny("task_graph_review_get",request);f.deny("task_graph_review_produce",request)
 	leaf=f.noteFor(c.leaf);leaf["validation_acceptance"].(map[string]any)["review_ref"]=software["review_ref"]
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":c.leaf,"payload":map[string]any{"note":string(rpJSON(t,leaf))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("arbor",c.leaf,map[string]any{"note":string(rpJSON(t,leaf))}))
 	controller:=f.taskNote();c.slot(controller)["tests"].(map[string]any)["acceptance"]=rpClone(t,f.slot(controller)["tests"].(map[string]any)["acceptance"].(map[string]any))
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":f.executionID,"payload":map[string]any{"note":string(rpJSON(t,controller))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("arbor",f.executionID,map[string]any{"note":string(rpJSON(t,controller))}))
 	if !reflect.DeepEqual(before,f.rows()) {t.Fatal("circuit metadata changed genuine exclusive origin")}
 }
 
@@ -193,9 +193,9 @@ func TestReviewBoundarySoftwarePublicationCannotBeRelabelledCircuit(t *testing.T
 	leaf:=f.leafNote();leaf["project_queue"]=rpClone(t,c.scope);f.updateNoteFor("REVIEW-TASK",leaf)
 	receipt:=rpCircuitValidation(t,"arbor","REVIEW-TASK",strings.Repeat("e",64),software["tests"].(map[string]any))
 	leaf["validation_acceptance"]=receipt
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":"REVIEW-TASK","payload":map[string]any{"note":string(rpJSON(t,leaf))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("arbor","REVIEW-TASK",map[string]any{"note":string(rpJSON(t,leaf))}))
 	note=f.taskNote();f.slot(note)["queue"]="author-circuit";f.slot(note)["tests"].(map[string]any)["acceptance"]=map[string]any{"task_id":"REVIEW-TASK","sha256":rpDigest(rpJSON(t,receipt))}
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":f.executionID,"payload":map[string]any{"note":string(rpJSON(t,note))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("arbor",f.executionID,map[string]any{"note":string(rpJSON(t,note))}))
 	if !reflect.DeepEqual(beforeRows,f.rows()) || !reflect.DeepEqual(beforeLeaf["validation_acceptance"],f.leafNote()["validation_acceptance"]) {t.Fatal("relabel erased immutable software origin/reference")}
 }
 
@@ -216,7 +216,7 @@ func TestReviewBoundaryCircuitWrongProjectControllerRefuses(t *testing.T) {
 	f:=newReviewProducerFixture(t);c:=rpCircuitFixture(t,f,false);c.publishReview()
 	f.createTaskIn("other-project",c.leaf,"",map[string]any{"ordinary":"distinct project row","project_queue":rpClone(t,c.scope)})
 	leaf:=f.noteFor(c.leaf);receipt:=rpClone(t,c.receipt);receipt["reviewer"]="another-independent-reviewer";leaf["validation_acceptance"]=receipt
-	f.denyOrigin("task_graph_update",map[string]any{"project_id":"other-project","node_id":c.leaf,"payload":map[string]any{"note":string(rpJSON(t,leaf))}})
+	f.denyOrigin("task_graph_update",f.taskUpdate("other-project",c.leaf,map[string]any{"note":string(rpJSON(t,leaf))}))
 	if !reflect.DeepEqual(f.noteFor(c.leaf)["validation_acceptance"],rpClone(t,c.receipt)) {t.Fatal("wrong namespace changed real circuit receipt")}
 }
 

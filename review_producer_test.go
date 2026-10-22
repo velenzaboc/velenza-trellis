@@ -55,6 +55,9 @@ type reviewProducerFixture struct {
 	repo, revision, head, productionBody, ownerBody, control, capture string
 	executionID, recordedWorktree string
 	project string
+	// Record only contracts actually supplied to successful native Task creates,
+	// keyed by exact project and ID; never synthesize a missing update identity.
+	taskContracts map[[2]string]map[string]any
 	// The in-memory SQL fake cannot infer timestamp CAST projections. Only
 	// its observers read simple persisted columns; real-tier observers use MCP.
 	fakeObserver bool
@@ -113,15 +116,17 @@ async function call(name, args) {
   return JSON.parse(wire.result.content[0].text);
 }
 test('allow', async()=>{
-  await call('task_graph_update',{project_id:'arbor',node_id:'T',payload:{note:'ordinary'}});
+  const node = await call('task_graph_get',{project_id:'arbor',node_id:'T'});
+  await call('task_graph_update',{project_id:'arbor',node_id:'T',contract:node.current_version.contract,payload:{note:'ordinary'}});
   assert.equal((await call('task_graph_get',{project_id:'arbor',node_id:'T'})).current_version.payload.note,'ordinary');
 });
 test('deny', async()=>{
-  await assert.rejects(call('task_graph_update',{project_id:'arbor',node_id:'T',payload:{note:JSON.stringify({validation_acceptance:{verified:true}})}}));
+  const node = await call('task_graph_get',{project_id:'arbor',node_id:'T'});
+  await assert.rejects(call('task_graph_update',{project_id:'arbor',node_id:'T',contract:node.current_version.contract,payload:{note:JSON.stringify({validation_acceptance:{verified:true}})}}));
 });
 test('document', async()=>{
   const node = await call('task_graph_get',{project_id:'arbor',node_id:'T'});
-  await call('task_graph_update',{project_id:'arbor',node_id:'T',payload:{note:node.current_version.payload.note,title:'document about review'}});
+  await call('task_graph_update',{project_id:'arbor',node_id:'T',contract:node.current_version.contract,payload:{note:node.current_version.payload.note,title:'document about review'}});
   assert.equal((await call('task_graph_get',{project_id:'arbor',node_id:'T'})).current_version.payload.title,'document about review');
 });
 test('committed', async()=>{
@@ -213,7 +218,17 @@ func (f *reviewProducerFixture) createTask(id,parent string,note map[string]any)
 func (f *reviewProducerFixture) createTaskIn(project,id,parent string,note map[string]any) {
 	payload:=map[string]any{"title":id,"pillar":"TEST","status":"not_started","owner":"UNOWNED","is_gap":false,"note":string(rpJSON(f.t,note))}
 	if parent!="" {payload["parent_id"]=parent}
-	f.allow("task_graph_create",map[string]any{"project_id":project,"node_kind":"task","stable_id":id,"contract":map[string]any{"canonical_name":id,"task_ref":id,"level":"task"},"payload":payload})
+	contract:=map[string]any{"canonical_name":id,"task_ref":id,"level":"task"}
+	f.allow("task_graph_create",map[string]any{"project_id":project,"node_kind":"task","stable_id":id,"contract":contract,"payload":payload})
+	if f.taskContracts==nil {f.taskContracts=map[[2]string]map[string]any{}}
+	f.taskContracts[[2]string{project,id}]=rpClone(f.t,contract)
+}
+
+func (f *reviewProducerFixture) taskUpdate(project,id string,payload map[string]any) map[string]any {
+	f.t.Helper()
+	contract,ok:=f.taskContracts[[2]string{project,id}]
+	if !ok {f.t.Fatalf("fixture update has no successful creation contract for project %q Task %q",project,id)}
+	return map[string]any{"project_id":project,"node_id":id,"contract":rpClone(f.t,contract),"payload":payload}
 }
 
 func newReviewProducerFixture(t *testing.T) *reviewProducerFixture {
@@ -392,7 +407,7 @@ func (f *reviewProducerFixture) leafNote() map[string]any { return f.noteFor("RE
 
 func (f *reviewProducerFixture) updateNoteFor(taskID string,note map[string]any) {
 	project:=f.project;if taskID==f.executionID {project="arbor"}
-	f.allow("task_graph_update",map[string]any{"project_id":project,"node_id":taskID,"payload":map[string]any{"note":string(rpJSON(f.t,note))}})
+	f.allow("task_graph_update",f.taskUpdate(project,taskID,map[string]any{"note":string(rpJSON(f.t,note))}))
 }
 
 func (f *reviewProducerFixture) updateNote(note map[string]any) {
@@ -598,7 +613,7 @@ func TestReviewProducerGenericMutationCannotManufactureAcceptance(t *testing.T) 
 			for _,part:=range path[:len(path)-1] {target=target[part].(map[string]any)}
 			target[path[len(path)-1]]=f.forgedProtectedValue(path,mode,oldLeaf,oldController)
 			before:=f.taskObservation(id)
-			f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":id,"payload":map[string]any{"note":string(rpJSON(t,forged)),"title":"must roll back too"}})
+			f.denyOrigin("task_graph_update",f.taskUpdate("arbor",id,map[string]any{"note":string(rpJSON(t,forged)),"title":"must roll back too"}))
 			if !reflect.DeepEqual(before,f.taskObservation(id)){t.Fatal("forgery partially mutated Task")}
 			createID:="FORGED-TASK";if id==f.executionID {createID="EXECUTION-QUEUE-forged-session"}
 			if path[0]=="validation_acceptance" {approval:=forged["validation_acceptance"].(map[string]any);approval["task_id"]=createID;approval["review_ref"].(map[string]any)["task_id"]=createID}
@@ -677,7 +692,7 @@ func TestReviewProducerLegacySlotAndDeletionCannotEraseOrigin(t *testing.T) {
 			for _,erase:=range []string{"root-approval","slot-approval","whole-slot"} {
 				t.Run(erase,func(t *testing.T){beforeLeaf,beforeController:=f.leafNote(),f.taskNote();note:=rpClone(t,beforeController);id:=f.executionID
 					switch erase {case "root-approval":note=rpClone(t,beforeLeaf);id="REVIEW-TASK";delete(note,"validation_acceptance");case "slot-approval":delete(f.slot(note)["tests"].(map[string]any),"acceptance");case "whole-slot":delete(note,"queue_assignments");delete(note,"queue_assignment")}
-					f.denyOrigin("task_graph_update",map[string]any{"project_id":"arbor","node_id":id,"payload":map[string]any{"note":string(rpJSON(t,note))}})
+					f.denyOrigin("task_graph_update",f.taskUpdate("arbor",id,map[string]any{"note":string(rpJSON(t,note))}))
 					if !reflect.DeepEqual(beforeLeaf,f.leafNote()) || !reflect.DeepEqual(beforeController,f.taskNote()) {t.Fatal("note replacement erased protected origin in leaf/controller")}
 				})
 			}
@@ -705,8 +720,9 @@ func TestReviewProducerLegacyNotesGenericRoutesAndTamperedResultAreNotOrigin(t *
 	forged:=map[string]any{"review_id":"forged-note","kind":"validate_tests","verified":true,"reviewer":"independent","revision":f.revision,"blocking":0}
 	f.allow("task_graph_add_worklink",map[string]any{"project_id":"arbor","task_id":"REVIEW-TASK","artifact_id":"forged-note","artifact_type":"finding","artifact_ref":"review:forged-note","note":string(rpJSON(t,forged))})
 	bad:=rpClone(t,f.request);bad["review_id"]="forged-note";f.deny("task_graph_review_get",bad)
-	f.allow("task_graph_create",map[string]any{"project_id":"arbor","node_kind":"artifact","stable_id":"review-one","contract":map[string]any{"artifact_type_kind":"finding","artifact_ref":"ordinary"},"payload":map[string]any{"task_id":"REVIEW-TASK","note":"ordinary note about a review"}})
-	f.allow("task_graph_update",map[string]any{"project_id":"arbor","node_id":"review-one","payload":map[string]any{"note":"updated ordinary metadata"}})
+	artifactContract:=map[string]any{"artifact_type_kind":"finding","artifact_ref":"ordinary"}
+	f.allow("task_graph_create",map[string]any{"project_id":"arbor","node_kind":"artifact","stable_id":"review-one","contract":artifactContract,"payload":map[string]any{"task_id":"REVIEW-TASK","note":"ordinary note about a review"}})
+	f.allow("task_graph_update",map[string]any{"project_id":"arbor","node_id":"review-one","contract":rpClone(t,artifactContract),"payload":map[string]any{"note":"updated ordinary metadata"}})
 	f.allow("task_graph_link",map[string]any{"project_id":"arbor","source_id":"review-one","target_id":"REVIEW-TASK","edge_label":"advances"})
 	f.allow("task_graph_archive_worklink",map[string]any{"project_id":"arbor","task_id":"REVIEW-TASK","link_id":"review-one"})
 	f.allow("task_graph_review_get",f.request)
