@@ -132,7 +132,13 @@ func TestReviewBoundaryCircuitDoorRequiresActualRegisteredContext(t *testing.T) 
 			note:=f.noteFor(c.delivery);plan:=note["project_queues"].(map[string]any)
 			switch change {case "missing-plan":delete(note,"project_queues");case "software-plan":plan["kind"]="software";case "wrong-project-plan":plan["project_id"]="other-project";case "stale-plan":plan["epoch"]="stale";case "missing-owner":plan["owners"]=plan["owners"].([]any)[:4];case "duplicate-owner":plan["owners"].([]any)[1].(map[string]any)["ref"]=plan["owners"].([]any)[0].(map[string]any)["ref"];case "wrong-admission":plan["admission"].(map[string]any)["ceremony"]="software-merge"}
 			f.updateNoteFor(c.delivery,note)
-		} else if change=="wrong-controller-session" {f.allow("task_graph_update",f.taskUpdate("arbor",f.executionID,map[string]any{"session_id":"other-session"}))} else {
+		} else if change=="wrong-controller-session" {
+			// Ownership changes use the typed CAS, not an ordinary note update.
+			controller:=f.taskObservation(f.executionID)["row"].(map[string]any)
+			f.allow("task_graph_reown",map[string]any{"project_id":"arbor","task_id":f.executionID,"owner":controller["owner"],"session_id":"other-session","repo":controller["repo"],"expected_owner":controller["owner"],"expected_session_id":controller["session_id"],"expected_repo":controller["repo"]})
+			reowned:=f.taskObservation(f.executionID)["row"].(map[string]any)
+			if reowned["session_id"]!="other-session" || reowned["owner"]!=controller["owner"] || reowned["repo"]!=controller["repo"] {t.Fatal("typed reown did not establish the mismatched controller session")}
+		} else {
 			note:=f.taskNote();slot:=c.slot(note)
 			switch change {case "wrong-slot-scope":slot["project_queue"].(map[string]any)["project_id"]="other-project";case "caller-kind-only":slot["kind"]="circuit";slot["project_queue"]=nil;case "missing-slot":note["queue_assignments"]=note["queue_assignments"].([]any)[:1];case "duplicate-worktree-slot":duplicate:=rpClone(t,slot);duplicate["task_id"]="caller-shadow";delete(duplicate["tests"].(map[string]any),"acceptance");note["queue_assignments"]=append(note["queue_assignments"].([]any),duplicate)}
 			f.updateNote(note)
