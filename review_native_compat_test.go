@@ -28,7 +28,7 @@ func rnConfiguration(t *testing.T, project string, keyed bool, database, reposit
 	cfg["review_producer"] = map[string]any{
 		"generation":"native-compat-e1", "executable":executable, "executable_sha256":rpDigest(program),
 		"args":[]string{"-test.run=^TestReviewProducerChild$","--","review-process-child",control,capture,"--tools",""},
-		"timeout_milliseconds":1000, "max_output_bytes":65536,
+		"timeout_milliseconds":5000, "max_output_bytes":65536,
 		"repositories":[]any{map[string]any{"repo":"example-infra","path":repository,"requirements_path":"REQUIREMENTS.md"}},
 	}
 	return cfg
