@@ -128,7 +128,7 @@ func assertSyntheticReviewParentEnvironmentStripped(t *testing.T, keys []string)
 	}
 }
 
-func TestReviewRunProcessPreservesUserAndOnlyOwnedOSCoordinates(t *testing.T) {
+func TestReviewProcessEnvironmentPreservesUserAndOnlyOwnedOSCoordinates(t *testing.T) {
 	user, userPresent := os.LookupEnv("USER")
 	if !userPresent || user == "" {
 		t.Fatal("positive control requires the service parent to expose its ordinary USER coordinate")
@@ -152,7 +152,7 @@ func TestReviewRunProcessPreservesUserAndOnlyOwnedOSCoordinates(t *testing.T) {
 	assertSyntheticReviewParentEnvironmentStripped(t, observed.Keys)
 }
 
-func TestReviewRunProcessDoesNotManufactureAbsentUser(t *testing.T) {
+func TestReviewProcessEnvironmentDoesNotManufactureAbsentUser(t *testing.T) {
 	setSyntheticReviewParentEnvironment(t)
 	unsetReviewEnvironmentForTest(t, "USER")
 	expectedKeys := reviewProcessExpectedEnvironmentKeys()
