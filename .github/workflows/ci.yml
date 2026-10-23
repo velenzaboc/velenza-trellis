@@ -99,4 +99,4 @@ jobs:
             echo "Spanner emulator readiness deadline exceeded" >&2
             exit 1
           fi
-          SPANNER_EMULATOR_HOST=localhost:9010 go test -tags=integration . -run '^TestIntegrationReviewProducer' -count=1
+          SPANNER_EMULATOR_HOST=localhost:9010 go test -tags=integration . -run '^(TestIntegrationReviewProducer|TestReviewNativeCompatibility)' -count=1

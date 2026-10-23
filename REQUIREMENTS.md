@@ -316,7 +316,7 @@ remain unchanged. Neither operation invokes reown or stores review under
 
 | Field | Meaning |
 |---|---|
-| `project_id` | logical native task project, resolved by the existing adapter |
+| `project_id` | optional logical native task project, resolved by the existing adapter; omission uses the configured default |
 | `task_id` | actual leaf Task whose frozen work is reviewed and whose validation approval is recorded |
 | `execution_task_id` | optional equality assertion for the existing controller; it must equal `EXECUTION-QUEUE-<binding.session_id>` |
 | `slot_id` | optional equality assertion only when the selected existing slot already records that ID; never required or invented |
@@ -382,6 +382,13 @@ do not authenticate this result.
 
 **Administrator configuration and source.** The native substrate descriptor
 adds `review_evidence_table`, explicitly naming the dedicated table. The
+evidence table is independently keyed by `(project_id,review_id)` in both
+pre-cutover and project-keyed ledger modes. Review origin does not require a
+physical project column on `Tasks`, `TaskLinks` or `TaskDeps`, a ledger
+replacement or a namespace migration. In pre-cutover mode the existing native
+adapter accepts omitted or explicit configured-default project requests and
+refuses every non-default project before invoking the reviewer or publishing
+state. Project-keyed mode retains its existing exact-project isolation. The
 server-only `review_producer` configuration contains `generation`, absolute
 `executable`, `executable_sha256`, fixed `args`, positive bounded
 `timeout_milliseconds` and `max_output_bytes`, and `repositories` entries
@@ -565,13 +572,14 @@ stable references, required signatures, `node.save`, protected typed rows,
 ArtifactAdmissionLog and post-admission verification remain mandatory. This
 preservation door introduces no circuit release service or software gate.
 
-A fixture-only reopened test generation can retain separately verified prior
-production proof when its actual production bytes remain unchanged and its
-test-only audit/reopen lineage is proven by the legitimate typed execution/
-lineage producer. Do not impose a blanket new production review after every
-reopen. That producer and helper adapter are a separate required dependency
-before combined activation; this unit neither fabricates it nor treats review
-origin as executed RED/GREEN evidence.
+Software authoring freezes scoped tests first, then independent `validate-tests`
+accepts their requirement-to-assertion coverage before `build-code` consumes
+that handoff. Writing tests first requires no full build or failing-first run.
+Review origin proves actual independent review, not executed RED/GREEN tests.
+An optional TDD helper or execution/lineage proposal is not stage authority or
+an authoring or activation prerequisite; local reports cannot manufacture
+protected acceptance. Actual testing and protected software delivery retain
+their required checks.
 
 **Typed reads and compatibility.** Typed get reads the configured exclusive
 table directly and validates the strict stored schema, producer capability,

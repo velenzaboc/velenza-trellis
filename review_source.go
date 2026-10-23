@@ -52,8 +52,11 @@ func validateReviewConfiguration(c SpecGraphConfig) error {
 	for _, d := range c.Substrates {
 		if d.ReviewEvidenceTable == "" { continue }
 		name := strings.ToLower(d.ReviewEvidenceTable)
-		if !reviewIdentifierPattern.MatchString(d.ReviewEvidenceTable) || ordinaryTables[name] || seen[name] || d.TaskStoreType != fleetPlanNativeStoreType || d.ProjectColumn == "" {
-			return fmt.Errorf("review_evidence_table must be an exclusive identifier on a project-keyed native substrate")
+		// Evidence owns its project key independently of the operational ledger.
+		// A pre-cutover ledger still uses resolveNativeProjectID's default-only
+		// boundary; configuring review evidence must not require replacing it.
+		if !reviewIdentifierPattern.MatchString(d.ReviewEvidenceTable) || ordinaryTables[name] || seen[name] || d.TaskStoreType != fleetPlanNativeStoreType {
+			return fmt.Errorf("review_evidence_table must be an exclusive identifier on a native substrate")
 		}
 		seen[name] = true
 	}

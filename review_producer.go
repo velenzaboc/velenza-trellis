@@ -17,7 +17,7 @@ import (
 var reviewProducerFault func(stage string) error
 
 type reviewInput struct {
-	ProjectID string `json:"project_id"`
+	ProjectID string `json:"project_id,omitempty"`
 	TaskID string `json:"task_id"`
 	ExecutionProjectID string `json:"execution_project_id,omitempty"`
 	ExecutionTaskID string `json:"execution_task_id,omitempty"`
