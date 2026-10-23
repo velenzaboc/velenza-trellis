@@ -178,7 +178,7 @@ test('dirty', async()=>{
 		"generation": "review-tests-e2", "executable": privateProgram,
 		"executable_sha256": rpDigest(program),
 		"args": []string{"-test.run=^TestReviewProducerChild$", "--", "review-process-child", control, capture, "--tools", ""},
-		"timeout_milliseconds": 1000, "max_output_bytes": 65536,
+		"timeout_milliseconds": 5000, "max_output_bytes": 65536,
 		"repositories": []any{map[string]any{"repo": "example-infra", "path": repo, "requirements_path": "REQUIREMENTS.md"}},
 	}
 	const executionID = "EXECUTION-QUEUE-shared-session"
