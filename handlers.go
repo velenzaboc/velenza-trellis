@@ -195,6 +195,9 @@ func handleUse(_ context.Context, _ *Env, in useInput, pin *snapshotPin) (Snapsh
 }
 
 func handleCreate(ctx context.Context, env *Env, in createInput) (MutationWriteResult, error) {
+	if in.NodeKind == "task" {
+		if err := guardReviewNoteWrite(nil, in.Payload["note"]); err != nil { return MutationWriteResult{}, err }
+	}
 	if in.NodeKind == "artifact" && namesWriterHandoverHistory(stringFromMap(in.Payload, "note")) {
 		return MutationWriteResult{}, errWriterHandoverHistory()
 	}
@@ -861,6 +864,13 @@ func handleImport(ctx context.Context, env *Env, in importInput) (ImportResult, 
 	}
 	if len(subs) == 0 {
 		return ImportResult{}, fmt.Errorf("no submissions provided")
+	}
+	// Refuse manufactured acceptance before generic preparation or backend
+	// errors. Actual admission/native writers repeat the fence in transaction.
+	for _, sub := range subs {
+		if sub.NodeKind == "task" {
+			if err := guardReviewNoteWrite(nil, sub.Payload["note"]); err != nil { return ImportResult{}, err }
+		}
 	}
 
 	orgID := env.Config.DefaultOrganizationID

@@ -122,6 +122,7 @@ func (a *SpannerSubstrateAdapter) checkFleetPlanNativeSchema(ctx context.Context
 		return err
 	}
 	want := []string{a.Descriptor.TaskTable, a.Descriptor.WorklinkTable, a.Descriptor.DepTable}
+	if a.Descriptor.ReviewEvidenceTable != "" { want = append(want,a.Descriptor.ReviewEvidenceTable) }
 	stmt := spanner.Statement{
 		SQL: `SELECT table_name FROM information_schema.tables
 			WHERE table_schema = '' AND table_name IN UNNEST(@names)`,
@@ -2244,6 +2245,7 @@ func nativeHandleCreate(ctx context.Context, env *Env, in createInput) (Mutation
 		}
 		var rows int64
 		_, err = client.ReadWriteTransaction(ctx, func(ctx context.Context, tx *spanner.ReadWriteTransaction) error {
+			if err := guardReviewNoteWrite(nil, in.Payload["note"]); err != nil { return err }
 			if parentID != "" {
 				if err := nativeRequireTaskInProject(ctx, tx, adapter, projectID, parentID); err != nil {
 					return err
@@ -2608,6 +2610,15 @@ func nativeUpdateTaskFields(ctx context.Context, env *Env, explicitProjectID, ta
 		}
 		if err := nativeGuardTaskOwnershipTuple(fields, currentOwner, nullStringValue(currentSession), nullStringValue(currentRepo)); err != nil {
 			return err
+		}
+		if incoming, writesNote := fields["note"]; writesNote {
+			iter := tx.Query(ctx, spanner.Statement{SQL: `SELECT note FROM ` + adapter.Descriptor.TaskTable + ` WHERE ` + adapter.projectWhereAnd() + `id = @id`, Params: map[string]interface{}{"project_id":projectID,"id":taskID}})
+			row, readErr := iter.Next()
+			iter.Stop()
+			if readErr != nil && readErr != iterator.Done { return readErr }
+			var stored spanner.NullString
+			if readErr == nil { if err := row.Columns(&stored); err != nil { return err } }
+			if err := guardNativeReviewTaskWrite(ctx, tx, adapter, env, projectID, taskID, nullStringValue(stored), incoming, fields); err != nil { return err }
 		}
 		if checkStatusWrite {
 			if err := checkTaskStatusWrite(ctx, env.TaskStatuses, taskID, currentStatus, newStatusLiteral); err != nil {

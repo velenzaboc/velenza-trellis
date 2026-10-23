@@ -85,8 +85,13 @@ func TestLaneMCPRuntimeServesRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 24 {
-		t.Fatalf("registered tools = %d, want 24", len(listed.Tools))
+	if len(listed.Tools) != 26 {
+		t.Fatalf("registered tools = %d, want 26", len(listed.Tools))
+	}
+	toolNames := map[string]bool{}
+	for _, tool := range listed.Tools { toolNames[tool.Name] = true }
+	for _, name := range []string{"task_graph_review_produce", "task_graph_review_get"} {
+		if !toolNames[name] { t.Fatalf("required typed tool %s is not registered", name) }
 	}
 
 	calls := []struct {

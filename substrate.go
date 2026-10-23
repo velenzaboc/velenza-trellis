@@ -181,6 +181,7 @@ type SubstrateDescriptor struct {
 	TaskTable     string `json:"task_table,omitempty"`
 	WorklinkTable string `json:"worklink_table,omitempty"`
 	DepTable      string `json:"dep_table,omitempty"`
+	ReviewEvidenceTable string `json:"review_evidence_table,omitempty"`
 
 	// schema_v1 (legacy — still serving handlers.go / ceremony.go until Phase 5/6).
 	NodeTable         string `json:"node_table,omitempty"`
@@ -496,6 +497,17 @@ func readPriorSignatureChainInTx(ctx context.Context, tx *spanner.ReadWriteTrans
 
 func writeNodeInTx(ctx context.Context, tx *spanner.ReadWriteTransaction, nodeT string, plan AdmissionPlan, chain []string) error {
 	nv := plan.Node
+	if plan.Record.ArtifactType == "task" {
+		var priorNote interface{}
+		if plan.PriorVersion != nil {
+			row, err := tx.ReadRow(ctx, nodeT, spanner.Key{plan.OrganizationID, nv.NodeID, int64(plan.PriorVersion.Version)}, []string{"content"})
+			if err != nil { return err }
+			var content spanner.NullJSON
+			if err := row.Columns(&content); err != nil { return err }
+			if payload, ok := content.Value.(map[string]interface{}); ok { priorNote = payload["note"] }
+		}
+		if err := guardReviewNoteWrite(priorNote, nv.Payload["note"]); err != nil { return err }
+	}
 	contractNullable := spanner.NullJSON{Valid: false}
 	if nv.Contract != nil {
 		contractNullable = spanner.NullJSON{Value: nv.Contract, Valid: true}
