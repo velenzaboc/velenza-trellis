@@ -44,7 +44,7 @@ func rnValidate(t *testing.T, raw map[string]any) error {
 func TestReviewNativeCompatibilityConfiguration(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil { t.Fatal(err) }
-	for _, project := range []string{"baos","orchard-native"} {
+	for _, project := range []string{"default-project","orchard-native"} {
 		for _, keyed := range []bool{false,true} {
 			name := project+"/legacy"; if keyed { name=project+"/project-keyed" }
 			t.Run(name,func(t *testing.T){

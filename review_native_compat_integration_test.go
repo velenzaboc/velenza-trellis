@@ -155,7 +155,7 @@ func (n *rnFixture) assertSchema(keyed bool) {
 }
 
 func TestReviewNativeCompatibilityDefaultProjectPublication(t *testing.T) {
-	for _,project:=range []string{"baos","orchard-native"} {t.Run(project,func(t *testing.T){
+	for _,project:=range []string{"default-project","orchard-native"} {t.Run(project,func(t *testing.T){
 		n:=rnNewFixture(t,project,false);f:=n.f
 		before,capture:=n.snapshot(),n.capture()
 		bad:=rpClone(t,f.request);bad["project_id"]=project+"-foreign"
@@ -201,7 +201,7 @@ func TestReviewNativeCompatibilityProjectKeyedPositiveControl(t *testing.T) {
 
 func TestReviewNativeCompatibilityMissingCapabilityRefuses(t *testing.T) {
 	for _,missing:=range []string{"table","descriptor","producer","executable"} {t.Run(missing,func(t *testing.T){
-		n:=rnNewFixture(t,"baos",false);f:=n.f
+		n:=rnNewFixture(t,"default-project",false);f:=n.f
 		accepted:=f.allow("task_graph_review_produce",f.request)
 		before,capture:=n.snapshot(),n.capture()
 		sub:=f.cfg["substrates"].([]any)[0].(map[string]any)
@@ -222,7 +222,7 @@ func TestReviewNativeCompatibilityMissingCapabilityRefuses(t *testing.T) {
 }
 
 func TestReviewNativeCompatibilityAtomicRollback(t *testing.T) {
-	n:=rnNewFixture(t,"baos",false);f:=n.f
+	n:=rnNewFixture(t,"default-project",false);f:=n.f
 	f.allow("task_graph_review_produce",f.request)
 	for _,stage:=range []string{"after_evidence_insert","after_leaf_publication","after_execution_publication"} {t.Run(stage,func(t *testing.T){
 		before,capture:=n.snapshot(),n.capture();var reached atomic.Bool
