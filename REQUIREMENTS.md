@@ -127,7 +127,8 @@ DDL cannot be applied to the live `task-plan` database by accident.
 `experimental_query_enabled`), `task_graph_import` (bulk topologically-ordered
 admission — the migration + reseed surface), `task_graph_health`.
 
-**Task-domain verbs** (10 — `task_queries.go`; in `fleet_plan_native` mode a
+**Task-domain verbs** (12 — `task_queries.go` and the bounded native review
+producer; in `fleet_plan_native` mode a
 task's business fields are the live `Tasks` columns; in schema_v1 migrated
 mode they live inside `Nodes.content` JSON):
 
@@ -143,8 +144,10 @@ mode they live inside `Nodes.content` JSON):
 | `task_graph_set_status` | update a task's status inside one project, every other field preserved |
 | `task_graph_reown` | atomically compare-and-set a task's owner/session/repository binding inside one project, preserving every non-binding field; an owned current task requires its exact expected tuple even when releasing to `UNOWNED`, which clears session/repository; the optional native-only `writer_handover` moves the sole existing protected worktree writer in the same transaction |
 | `task_graph_claim` | atomically claim an empty/`UNOWNED` task for one owner/session/repository tuple; concurrent claimers resolve first-writer-wins, exact durable-tuple retries are idempotent, and only the acquiring transaction may attest optional execution coordinates |
+| `task_graph_review_produce` | execute one server-controlled independent no-tools review of exact frozen native task/slot/source inputs, then atomically insert exclusive immutable origin evidence and publish its bound acceptance reference; native mode only |
+| `task_graph_review_get` | resolve that exclusive origin by exact project/review/task/slot/input identity, validate its strict kind and current frozen generation, and refuse legacy notes, stale inputs or unavailable producer capability; native mode only |
 
-Total: **24 verbs**.
+Total: **26 verbs**.
 
 `task_graph_project_snapshot` is the reusable application read boundary. It
 accepts a logical `project_id`, a bounded row limit, and an optional typed
@@ -188,7 +191,7 @@ admission copy of task state; `task_graph_set_status`, `task_graph_reown`,
 `task_graph_add_worklink`, `task_graph_archive_worklink`,
 `task_graph_supersede_worklink`, `task_graph_create`,
 `task_graph_update`, `task_graph_link`, and `task_graph_claim` mutate `Tasks` /
-`TaskLinks` / `TaskDeps` through the server's Spanner client. Every native mutation resolves exactly one
+`TaskLinks` / `TaskDeps` through the server's Spanner client. Each of these bookkeeping mutations resolves exactly one
 `project_id` first and predicates all endpoint reads/writes on that project;
 cross-project links/deps fail closed because one endpoint is not found in the
 chosen project. Worklink archive additionally requires the named task to exist
@@ -295,6 +298,300 @@ worktree without changing its binding identity or execution coordinates:
 - **Receipts identify the durable transition.** The result includes the native
   mutation receipt and `writer_handover_receipt`, naming the stable binding and
   history link ids, old and new writer coordinates, row count and idempotency.
+
+### Independent review origin in the existing native service
+
+`task_graph_review_produce` and `task_graph_review_get` extend the existing
+configured native service with one exclusive immutable evidence table. They
+own software review origin. Circuit validation keeps its existing hash-based
+runtime handoff below; neither operation is a circuit release prerequisite.
+They do not create another task/queue ledger, signer, identity framework, workflow
+service or scheduler. The table is additional evidence, not a second admission
+copy of `Tasks`, `TaskLinks` or `TaskDeps`. The writer-handover and supersede
+contracts above, including their historical identifiers and note meanings,
+remain unchanged. Neither operation invokes reown or stores review under
+`writer_handover_history=`.
+
+**Typed wire identity.** Both operations accept exactly these JSON fields:
+
+| Field | Meaning |
+|---|---|
+| `project_id` | optional logical native task project, resolved by the existing adapter; omission uses the configured default |
+| `task_id` | actual leaf Task whose frozen work is reviewed and whose validation approval is recorded |
+| `execution_task_id` | optional equality assertion for the existing controller; it must equal `EXECUTION-QUEUE-<binding.session_id>` |
+| `slot_id` | optional equality assertion only when the selected existing slot already records that ID; never required or invented |
+| `slot_key` | optional equality assertion of the deterministic server-derived slot identity defined below |
+| `binding_link_id` | exact current canonical native worktree binding |
+| `kind` | `validate_tests` or `production`, with no substitution between them |
+| `revision` | `slot.tests.revision` for `validate_tests`, or actual frozen `slot.revision` for `production`; verify immutable source |
+| `base_revision` | required only for `production`; exact recorded `slot.base_revision` and verified production comparison base |
+| `epoch`, `context_sha256` | exact project-queue generation of that slot |
+| `review_id` | project-scoped request/retry identity, not caller authority |
+
+Typed get may also receive `execution_project_id`, `input_sha256` and
+`producer_generation` from a returned reference as equality assertions. They
+must equal actual server-resolved state; they never select origin or producer
+authority. A production response/reference includes its `base_revision`;
+validation responses do not invent a production base.
+
+Unknown fields, including commands, executable/argument/environment overrides,
+findings files, supplied findings, reviewer labels and `verified`, are refused.
+The actual layout is TWO distinct Tasks. The leaf `task_id` owns its canonical
+worklink and `note.validation_acceptance`. The existing controller Task
+`EXECUTION-QUEUE-<binding.session_id>` owns `note.queue_assignments` (array) or
+historical `note.queue_assignment` (singleton). Never rehome those slots onto
+the leaf. Resolve the leaf in its exact requested project and the controller in
+the configured default project, matching the existing gate's omitted-project
+controller lookup. These two review operations explicitly bind both scoped row
+identities; existing single-project bookkeeping handlers and cross-project edge
+refusals remain unchanged. The controller payload session must equal the actual
+binding session. Caller-selected controller namespaces or different explicit
+controller IDs refuse.
+
+Select exactly one active real slot by leaf project/task, normalized repository
+and exact recorded physical worktree coordinates of the canonical leaf binding;
+verify its project-queue scope and frozen source generation. Missing, duplicate,
+ambiguous or contradictory slots/bindings refuse. No mandatory `slot_id` exists
+in current slots. Preserve an existing explicit ID and validate it if asserted.
+The service derives `slot_key` without writing new assignment state: SHA-256 of
+the UTF-8 length-prefixed scalar tuple `velenza-review-slot/1`, leaf project,
+leaf task, controller project, controller task, binding link ID, normalized
+repository, exact recorded worktree, binding branch, thread and session. Frame
+each scalar as its decimal UTF-8 byte length, `:`, then its exact UTF-8 bytes,
+with no separator or padding between framed scalars. This is a locator/digest,
+not origin proof. Queue stage is not a new slot identity; current stage/action
+authorization stays with the existing queue gate. Shared child sessions remain
+usable and never authenticate an individual reviewer or prove independence.
+
+The administrator's source checkout can live on another host/path from the
+recorded worktree. Keep immutable repository acquisition separate from exact
+registered binding/slot coordinates; do not stat a remote path as if it were a
+local source checkout or substitute the administrator's path into the binding.
+
+The response to either operation is a JSON object with `schema_version` equal
+to `velenza_review_result/1`, the exact request identity fields above,
+`input_sha256`, `producer_generation`, `result` (the actual strict child result),
+`review_ref` and `idempotent`. `review_ref` is the structured identity
+`{project_id,review_id,task_id,execution_project_id,execution_task_id,slot_key,
+binding_link_id,kind,revision,epoch,context_sha256,input_sha256,producer_generation}`
+plus production `base_revision` and any genuinely existing `slot_id`. It is resolved through the
+typed get operation, never treated as a signature or accepted inline.
+`idempotent=true` identifies an exact completed retry/readback. Generic node
+version1, `admitted_by`, ordinary mutation receipts, timestamps and local paths
+do not authenticate this result.
+
+**Administrator configuration and source.** The native substrate descriptor
+adds `review_evidence_table`, explicitly naming the dedicated table. The
+evidence table is independently keyed by `(project_id,review_id)` in both
+pre-cutover and project-keyed ledger modes. Review origin does not require a
+physical project column on `Tasks`, `TaskLinks` or `TaskDeps`, a ledger
+replacement or a namespace migration. In pre-cutover mode the existing native
+adapter accepts omitted or explicit configured-default project requests and
+refuses every non-default project before invoking the reviewer or publishing
+state. Project-keyed mode retains its existing exact-project isolation. The
+server-only `review_producer` configuration contains `generation`, absolute
+`executable`, `executable_sha256`, fixed `args`, positive bounded
+`timeout_milliseconds` and `max_output_bytes`, and `repositories` entries
+`{repo,path,requirements_path}`. Repository roots and the pinned executable are
+administrator-controlled, not request-derived. This uses existing digests for
+byte identity and introduces no signing claim or new cryptographic choice.
+Validate the complete configured descriptor and producer before use. An
+unconfigured producer/table may leave ordinary bookkeeping available, but both
+review operations and affected protected progression refuse. A configured
+missing table or unavailable producer never falls back to notes or local files.
+
+Acquire files through verified immutable source, including committed Git
+objects rather than dirty working-tree bytes. Executable `slot.tests.files`
+contains only the frozen executable test files: every such file must have named
+coverage. Bind governing-owner bytes and hashes separately through
+`slot.governing_files` and the configured requirements path; an owner document
+is not an uncovered pretend test. Resolve any Inarch revision only
+through its existing authoritative verified-source path; an unavailable or
+unverified provider refuses. Check every selected test/owner hash and legal
+relative path/type against the frozen revision. Absolute/parent escape paths,
+missing source, mismatched hashes and caller revision labels are not accepted
+as source evidence. Supply the full governing requirement and assertion/source
+bundle as data; mutable notes alone do not establish source authority.
+
+For production, require the actual frozen code head `slot.revision`, comparison
+base `slot.base_revision`, and complete declared `slot.production_files`
+path/hash scope. Verify their immutable relationship and acquire the FULL
+committed base-to-head diff and all committed changed-file bodies/hashes. Compare
+the complete actual diff path set with declared scope; no changed file may be
+silently omitted. Retain the earlier frozen test revision/files and acquire the
+full governing owner separately. Missing/wrong head/base, undeclared or incomplete
+scope, missing bodies and hash mismatches refuse. A test-only commit or kind
+label is not production review. Dirty local bytes never replace committed input.
+
+**Real producer boundary.** Launch a fresh independent no-tools reviewer
+process using the administrator's pinned executable/configuration and fixed
+argv, directly, without a shell. The caller selects no executable, flags or
+environment. Reuse the sanctioned independent review invocation with tools
+disabled. A shared MCP bearer authorizes requests; it does not prove a distinct
+human/agent identity. Capture the actual child stdin/stdout/stderr/exit through
+service-owned resources. Never reread a caller-writable receipt or accept the
+local helper's record mode as execution. Missing launch, timeout, nonzero exit,
+truncation, oversize, malformed/duplicate/ambiguous JSON or incomplete coverage
+refuses publication. Inputs are untrusted data, not reviewer instructions.
+
+The child's stdin JSON bundle contains `kind`, `input_sha256`, both exact Task
+identities and binding/slot identity, `test_files` (committed executable paths,
+hashes and contents), and separate `governing_files` (full owner paths, hashes
+and contents). For production it additionally contains
+`production={base_revision,revision,diff,files:[{path,sha256,content}]}` holding
+the complete committed production input. Governing hashes, frozen tests and
+the complete production input all contribute to `input_sha256`. Precisely,
+remove only `input_sha256` from this flat stdin object, serialize it with Go
+`encoding/json.Marshal` (sorted object keys, default JSON string/HTML escaping,
+no whitespace/newline), and hash those UTF-8 bytes with SHA-256. The controlled
+test child recomputes this digest before emitting any successful result, so
+omitting owner or production bytes from the digest cannot pass a positive.
+The stdin projection contains frozen inputs only, not the retry `review_id`,
+raw mutable Task notes, prior acceptance output or unrelated metadata.
+Its stdout is one strict object with `schema_version` equal to
+`velenza_independent_review/1`, matching `kind` and `input_sha256`, complete
+`requirements`, `coverage`, `blocking`, `production_boundary`, `tautologies`,
+`fixture_supplied_authority` and `summary`. `blocking` is an array; acceptance
+requires it empty, `production_boundary=true`, `tautologies=false` and
+`fixture_supplied_authority=false`. Coverage maps each requirement to named
+`path`, `case`, `assertion`, actual `boundary` and `scenario` (`positive`,
+`refusal` or `exception`); explain inapplicable scenarios in the review rather
+than silently omit requirements. Compare this mapping with the real committed
+assertions and governing requirement scope. A zero count or different reviewer
+string alone is insufficient. The server records what actually ran and returned;
+this establishes process origin, not infallibility of a model's judgment.
+Production output also names matching `production_base_revision`,
+`production_revision` and complete `reviewed_files=[{path,sha256}]`; incomplete
+production coverage or a different head/base refuses even if test coverage is
+complete and the zero-blocker label is well formed.
+
+**Exclusive immutable storage.** Key review evidence by exact
+`(project_id,review_id)`. The candidate physical shape is `project_id`,
+`review_id`, `task_id`, `execution_project_id`, `execution_task_id`, `slot_key`,
+`kind`, `input_sha256`, `binding_json`,
+`result_json`, `producer_generation` and `created_at`; `binding_json` contains
+the exact bound request, frozen source and protected generation, while
+`result_json` preserves the actual strict result. Table identifiers remain in
+the validated substrate descriptor. The candidate test DDL provisions this
+shape only inside isolated tests. Actual DDL belongs to the sanctioned schema
+deployment path, never MCP query, import or a hand-applied live SQL command.
+Only successful service-controlled producer completion inserts origin rows.
+Generic create/import/update/link/archive/query cannot mint or change them.
+Never backfill authority from valid-looking legacy Task/TaskLinks notes.
+
+**One publication transaction.** Resolve coherent inputs before review; run
+the external process OUTSIDE a retried database transaction. Then one short
+native transaction rereads and compares the exact leaf AND controller rows,
+selected slot, canonical binding and frozen/protected input generation. Insert
+immutable origin evidence, publish the actual server-produced LEAF
+`note.validation_acceptance` with `review_ref`, and publish the CONTROLLER's
+selected slot `tests.acceptance={task_id,sha256,review_ref}` atomically for
+`validate_tests`. That acceptance `task_id` is the separate leaf identity;
+preserve the existing validation
+receipt schema/consumer hash convention for compatibility, while origin always
+requires typed resolution. For `production`, publish the controller's selected slot
+`acceptance` with its `revision`, `blocking=0` and exact `review_ref`. Local
+evidence paths and hashes remain historical data, never origin substitutes.
+Preserve unrelated metadata in BOTH Tasks and all disjoint slots. The test fault
+seams `after_evidence_insert`, `after_leaf_publication` and
+`after_execution_publication` must occur after the named actual writes;
+failure at any seam rolls back origin, leaf approval and controller acceptance.
+An exact completed retry
+reads the same result without rerunning the reviewer; changed input, conflicting
+identity/collision, stale generation or ambiguous state refuses without overwrite.
+Concurrent identical requests converge on one accepted origin; different requests
+cannot win the same identity. Transaction retries never rerun an external review.
+
+**Protect actual software mutation boundaries.** Generic Task create/import/update and
+every note-writing transaction refuse caller manufacture, alteration or deletion
+of software leaf root `validation_acceptance`; software controller slot `tests.acceptance`, `acceptance`,
+`tdd_red_receipt`, `tests.tdd_audit_receipt`, `tdd_green_receipt` and
+`reopen_history`. Apply the same rule to array and legacy singleton slots at
+their exact structural paths, including an array-valued `reopen_history`. A
+changed surrounding note cannot erase the
+protection. Unchanged protected get/update echo and ordinary metadata/project
+queue bookkeeping remain allowed; arbitrary prose containing "review" does
+not become protected authority. Typed producer publication is the narrow owner
+of software review acceptance. Existing held TDD labels/files are historical data and do
+not become valid server origin; this service does not implement the TDD helper.
+Refuse generic protected-field writes with `REVIEW_ORIGIN_REQUIRED` before
+generic admission/backend or shape failures can masquerade as an origin guard.
+Correctly shaped caller-authored, cross-bound and replayed approvals/references
+remain untrusted. A path/hash to a plausible local receipt does not prove origin.
+
+**Preserve the existing circuit bookkeeping boundary.** Higher native
+WORKFLOW `project_queues.validation_evidence` and `runtime_assignments` also
+use `validation_acceptance` and `tests.acceptance` for circuits. Their existing
+file-hash handoff must remain recordable without a Git revision, CI, PR,
+software merge, configured software reviewer or software evidence table.
+Those fields are workflow metadata, never software review origin, executed
+runtime validation, signatures, admission or post-admission proof.
+
+The narrow generic preservation door is an existing native Task update, checked
+in the actual mutation transaction. Plain Task/slot creation stays available;
+create/import cannot grant an exemption from a caller-supplied kind or note.
+Resolve the actual leaf in the exact project, its sole coherent canonical
+worktree binding, and the configured-default-project
+`EXECUTION-QUEUE-<binding.session_id>` controller with matching recorded session.
+There must be exactly one prior registered active slot for that physical
+worktree/repository; match its leaf/project/binding coordinates, including any
+existing slot ID. Resolve the actual delivery Task through its recorded
+`project_queue` scope and validate its full circuit plan: schema, exact project
+and delivery ID, epoch/context, all five distinct circuit queue owners, and
+`admission.ceremony=node.save` plus a nonempty post-admission check. Missing,
+contradictory, duplicate, cross-project, software or caller-labelled-only context
+refuses. A proposed note cannot mint its own prior assignment context.
+
+Only the circuit leaf's `validation_acceptance` and that circuit slot's
+`tests.acceptance` use this door. The validation review is recorded while the
+registered slot is `review-validation`; its normal transition to `author-circuit`
+may publish the hash reference in the same controller update. Validate the
+existing shared receipt schema, project/leaf/context, nonempty distinct
+author/reviewer, zero blockers, complete files/requirements/coverage/evidence,
+and the three boundary flags against the registered hash-only test handoff.
+`tests.acceptance={task_id,sha256}` must resolve that same leaf's current
+validation receipt and its exact JSON.stringify hash. Changed file hashes need
+renewed review. A hash mismatch, other leaf/project/context/files or replay
+from another path refuses. The controller transition preserves disjoint slots
+and unrelated metadata. No Git test revision is required or inferred.
+
+Any changed before/after software `review_ref` remains protected, even if a
+caller relabels a plan or slot as circuit. An unchanged software slot may coexist
+with a legitimate disjoint circuit slot; its origin/reference is preserved.
+Circuit receipts cannot carry software `review_ref`, overwrite software
+publication, create exclusive origin rows, substitute candidate acceptance for
+software review, or satisfy software progression. Software consumers always
+resolve exact origin through `task_graph_review_get`; labels and legacy notes
+never grant that capability. Schema-v1/generic imports cannot manufacture this
+native context. Ordinary metadata and unchanged protected echo keep working.
+
+Existing circuit `candidate_files`/`candidate_acceptance`/`validation_evidence`
+bookkeeping remains usable for `validate-circuit` and `admit-circuit` under the
+native hash-based runtime contract. The owner oracle/validator, lawful names,
+stable references, required signatures, `node.save`, protected typed rows,
+ArtifactAdmissionLog and post-admission verification remain mandatory. This
+preservation door introduces no circuit release service or software gate.
+
+Software authoring freezes scoped tests first, then independent `validate-tests`
+accepts their requirement-to-assertion coverage before `build-code` consumes
+that handoff. Writing tests first requires no full build or failing-first run.
+Review origin proves actual independent review, not executed RED/GREEN tests.
+An optional TDD helper or execution/lineage proposal is not stage authority or
+an authoring or activation prerequisite; local reports cannot manufacture
+protected acceptance. Actual testing and protected software delivery retain
+their required checks.
+
+**Typed reads and compatibility.** Typed get reads the configured exclusive
+table directly and validates the strict stored schema, producer capability,
+kind, complete binding and actual current recorded frozen source. Wrong project,
+leaf/controller project or Task, controller/binding session, selected slot,
+binding, revision/base, epoch, context or kind; tampered/incomplete output;
+stale/replayed generation; and missing producer/table capability refuse. Generic
+node-ID collisions and ordinary worklinks never mask or replace exclusive
+evidence. Software tools/readers or a rollback that lacks this capability must fail
+closed at software consuming hooks; no legacy-note bootstrap trust is permitted. An old
+generic writer cannot mint rows in the new exclusive table. Ordinary tasks and
+existing writer/succession history keep their semantics and usability.
 
 Native dependency identity is one `TaskDeps.dep_id` for the normalized
 `(project_id, gates_source_id, gates_target_id, gates)` relationship. Both

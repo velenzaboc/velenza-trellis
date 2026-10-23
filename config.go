@@ -111,6 +111,10 @@ type SpecGraphConfig struct {
 	// configs should always set this.
 	Dedup *DedupPolicyConfig `json:"dedup_policy,omitempty"`
 
+	// Optional administrator-owned review capability. Missing capability keeps
+	// ordinary bookkeeping usable, but never permits protected acceptance.
+	ReviewProducer *ReviewProducerConfig `json:"review_producer,omitempty"`
+
 	Substrates  []SubstrateDescriptor  `json:"substrates"`
 	NodeKinds   []NodeKindDescriptor   `json:"node_kinds"`
 	EdgeLabels  []EdgeLabelDescriptor  `json:"edge_labels"`
@@ -188,6 +192,9 @@ type ProjectionDescriptor struct {
 // defaults. No fallbacks. If a value is missing, Validate returns an error
 // and loadConfig fails — the binary will not boot.
 func (c SpecGraphConfig) Validate() error {
+	if err := validateReviewConfiguration(c); err != nil {
+		return err
+	}
 	if c.Mode == "" {
 		return fmt.Errorf("mode is required (experimental_bootstrap | production)")
 	}
