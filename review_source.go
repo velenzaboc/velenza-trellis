@@ -317,7 +317,9 @@ func reviewRunProcess(ctx context.Context,config *ReviewProducerConfig,program,i
 	// Only service-owned OS/runtime coordinates reach the child. In particular
 	// MCP arguments, repository config and inherited auth/token variables do not.
 	cmd.Env = []string{}
-	for _, key := range []string{"PATH","HOME","USERPROFILE","SYSTEMROOT","WINDIR","TMPDIR","TMP","TEMP","LANG","LC_ALL"} {
+	// USER is an OS identity coordinate used by the native reviewer's existing
+	// keychain lookup; it is not a credential or caller-selected override.
+	for _, key := range []string{"PATH","HOME","USER","USERPROFILE","SYSTEMROOT","WINDIR","TMPDIR","TMP","TEMP","LANG","LC_ALL"} {
 		if value,ok := os.LookupEnv(key); ok { cmd.Env = append(cmd.Env,key+"="+value) }
 	}
 	cmd.Stdin = bytes.NewReader(input)
