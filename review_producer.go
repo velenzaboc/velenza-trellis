@@ -9,6 +9,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
 )
 
 // reviewProducerFault is a transaction-failure seam, analogous to
@@ -402,6 +403,13 @@ func handleReviewProduce(ctx context.Context,env *Env,in reviewInput) (map[strin
 		response = reviewResponse(current,in.ReviewID,material,result,config.Generation,false)
 		return nil
 	})
+	if spanner.ErrCode(err) == codes.AlreadyExists {
+		// A competing exact request may commit after this transaction read no
+		// origin. Re-read through the ordinary authenticated read boundary: the
+		// immutable origin, current binding, frozen inputs and producer process
+		// must all verify. A conflict alone never supplies acceptance authority.
+		return handleReviewGet(ctx,env,in)
+	}
 	if err != nil { return nil,fmt.Errorf("review publication refused: %w",err) }
 	return response,nil
 }
