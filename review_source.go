@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -303,6 +305,10 @@ func (w *reviewOutputWriter) Write(data []byte) (int,error) {
 }
 
 func reviewRunProcess(ctx context.Context,config *ReviewProducerConfig,program,input []byte) (reviewCapturedProcess,error) {
+	return reviewRunProcessWithStart(ctx,config,program,input,func(_ context.Context,cmd *exec.Cmd) error { return cmd.Start() })
+}
+
+func reviewRunProcessWithStart(ctx context.Context,config *ReviewProducerConfig,program,input []byte,start func(context.Context,*exec.Cmd) error) (reviewCapturedProcess,error) {
 	// Run the verified bytes from an exclusive private snapshot. A replace of
 	// the configured pathname after hash verification cannot change this child.
 	dir,err := os.MkdirTemp("","task-graph-review-")
@@ -312,24 +318,43 @@ func reviewRunProcess(ctx context.Context,config *ReviewProducerConfig,program,i
 	if err := os.WriteFile(name,program,0700); err != nil { return reviewCapturedProcess{},err }
 	deadline,cancel := context.WithTimeout(ctx,time.Duration(config.TimeoutMilliseconds)*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(deadline,name,config.Args...)
-	cmd.Dir = dir
 	// Only service-owned OS/runtime coordinates reach the child. In particular
 	// MCP arguments, repository config and inherited auth/token variables do not.
-	cmd.Env = []string{}
+	environment := []string{}
 	// USER is an OS identity coordinate used by the native reviewer's existing
 	// keychain lookup; it is not a credential or caller-selected override.
 	for _, key := range []string{"PATH","HOME","USER","USERPROFILE","SYSTEMROOT","WINDIR","TMPDIR","TMP","TEMP","LANG","LC_ALL"} {
-		if value,ok := os.LookupEnv(key); ok { cmd.Env = append(cmd.Env,key+"="+value) }
+		if value,ok := os.LookupEnv(key); ok { environment = append(environment,key+"="+value) }
 	}
-	cmd.Stdin = bytes.NewReader(input)
-	budget := &reviewOutputBudget{left:config.MaxOutputBytes}
-	stdout,stderr := &reviewOutputWriter{budget:budget},&reviewOutputWriter{budget:budget}
-	cmd.Stdout,cmd.Stderr = stdout,stderr
-	cmd.WaitDelay = time.Second
-	err = cmd.Run()
-	if err != nil || deadline.Err() != nil || budget.exceeded { return reviewCapturedProcess{},fmt.Errorf("review process failed/timed out/exceeded output: %w",err) }
-	return reviewCapturedProcess{config.Generation,config.ExecutableSHA256,append([]string{},config.Args...),stdout.output.String(),stderr.output.String(),0},nil
+	for attempt := 1; ; attempt++ {
+		if err := deadline.Err(); err != nil { return reviewCapturedProcess{},fmt.Errorf("review process cancelled/timed out: %w",err) }
+		// Failed Start calls cannot reuse an exec.Cmd. Each attempt retains the
+		// same private bytes, fixed inputs and original absolute deadline.
+		cmd := exec.CommandContext(deadline,name,config.Args...)
+		cmd.Dir,cmd.Env,cmd.Stdin = dir,append([]string{},environment...),bytes.NewReader(input)
+		budget := &reviewOutputBudget{left:config.MaxOutputBytes}
+		stdout,stderr := &reviewOutputWriter{budget:budget},&reviewOutputWriter{budget:budget}
+		cmd.Stdout,cmd.Stderr,cmd.WaitDelay = stdout,stderr,time.Second
+		err := start(deadline,cmd)
+		if err == nil {
+			// Once a child starts, await its terminal result and never replay it.
+			err = cmd.Wait()
+			if contextErr := deadline.Err(); contextErr != nil { return reviewCapturedProcess{},fmt.Errorf("review process cancelled/timed out: %w",contextErr) }
+			if err != nil { return reviewCapturedProcess{},fmt.Errorf("review process failed: %w",err) }
+			if budget.exceeded { return reviewCapturedProcess{},fmt.Errorf("review process exceeded output") }
+			return reviewCapturedProcess{config.Generation,config.ExecutableSHA256,append([]string{},config.Args...),stdout.output.String(),stderr.output.String(),0},nil
+		}
+		if contextErr := deadline.Err(); contextErr != nil { return reviewCapturedProcess{},fmt.Errorf("review process cancelled/timed out: %w",contextErr) }
+		if !errors.Is(err,syscall.ETXTBSY) || cmd.Process != nil || attempt >= 3 { return reviewCapturedProcess{},fmt.Errorf("review process start failed: %w",err) }
+		// Only structured pre-start ETXTBSY consumes this bounded backoff.
+		timer := time.NewTimer(time.Duration(attempt)*25*time.Millisecond)
+		select {
+		case <-deadline.Done():
+			timer.Stop()
+			return reviewCapturedProcess{},fmt.Errorf("review process cancelled/timed out: %w",deadline.Err())
+		case <-timer.C:
+		}
+	}
 }
 
 type reviewCoverage struct {
