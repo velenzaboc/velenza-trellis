@@ -2,50 +2,51 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
-const integrationEntrypoint = "scripts/test-integration.sh"
+const (
+	integrationEntrypoint = "scripts/test-integration.sh"
+	emulatorImage         = "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
+	ownedContainerID      = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	goTestSelection       = "^(TestAuditBoundary|TestNativeCompatibility|TestTaggedPrimary)$"
+)
 
 type entrypointRun struct {
-	exitCode int
-	output   string
-	commands string
+	exitCode   int
+	output     string
+	commands   string
+	calls      map[string][][]string
+	runnerTemp string
+	goTestHost string
 }
 
 func TestIntegrationEntrypointDiscoversTaggedSourceMembershipAndRunsEverySelectedTest(t *testing.T) {
-	run := runIntegrationEntrypoint(t, map[string]string{
-		"FAKE_INTEGRATION_TESTS": "TestTaggedPrimary\nTestAuditBoundary\nTestNativeCompatibility",
-	})
+	run := runIntegrationEntrypoint(t, nil)
 	if run.exitCode != 0 {
 		t.Fatalf("entrypoint exit = %d, want 0; output:\n%s", run.exitCode, run.output)
 	}
-	requireCommand(t, run.commands, "go list", "-tags=integration")
-	requireCommandWithout(t, run.commands, "go list", "-tags=integration")
-	requireCommand(t, run.commands, "go run")
-	testCommand := commandLine(t, run.commands, "go test")
-	for _, name := range []string{"TestTaggedPrimary", "TestAuditBoundary", "TestNativeCompatibility"} {
-		if !strings.Contains(testCommand, name) {
-			t.Fatalf("go test command omitted discovered tagged test %q: %s", name, testCommand)
-		}
+	requireCall(t, run, "go", []string{"list", "-f", "{{range .TestGoFiles}}{{println .}}{{end}}", "."})
+	requireCall(t, run, "go", []string{"list", "-tags=integration", "-f", "{{range .TestGoFiles}}{{println .}}{{end}}", "."})
+	requireCallPrefix(t, run, "go", []string{"run"})
+	requireOnlyCall(t, run, "go-test", []string{"test", "-tags=integration", ".", "-run", goTestSelection, "-count=1"})
+	if run.goTestHost != "localhost:9010" {
+		t.Fatalf("SPANNER_EMULATOR_HOST = %q, want localhost:9010", run.goTestHost)
 	}
-	if strings.Contains(testCommand, "TestUnitOwnsEndpoint") {
-		t.Fatalf("go test command selected an untagged unit fixture: %s", testCommand)
+	if strings.Contains(goTestSelection, "TestUnitOwnsEndpoint") || strings.Contains(goTestSelection, "TestWrongTagVariant") {
+		t.Fatalf("selection admitted an untagged or unsatisfied-tag fixture: %s", goTestSelection)
 	}
-	for _, want := range []string{"-tags=integration", "-count=1", "."} {
-		if !strings.Contains(testCommand, want) {
-			t.Fatalf("go test command missing %q: %s", want, testCommand)
-		}
-	}
-	if !strings.Contains(testCommand, "^(") || !strings.Contains(testCommand, ")$") {
-		t.Fatalf("selection is not exact and anchored: %s", testCommand)
-	}
-	requireOwnedCleanup(t, run.commands)
+	requirePinnedCreate(t, run)
+	requireReadinessProbes(t, run)
+	requireOwnedCleanup(t, run)
 }
 
 func TestIntegrationEntrypointRefusesInvalidOrAmbiguousInventory(t *testing.T) {
@@ -53,9 +54,10 @@ func TestIntegrationEntrypointRefusesInvalidOrAmbiguousInventory(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{name: "empty", env: map[string]string{"FAKE_INTEGRATION_TESTS": ""}},
-		{name: "malformed", env: map[string]string{"FAKE_INTEGRATION_TESTS": "not-a-go-test"}},
-		{name: "duplicate", env: map[string]string{"FAKE_INTEGRATION_TESTS": "TestTaggedPrimary\nTestTaggedPrimary"}},
+		{name: "empty", env: map[string]string{"FIXTURE_SOURCE_MODE": "empty"}},
+		{name: "invalid signature", env: map[string]string{"FIXTURE_SOURCE_MODE": "invalid-signature"}},
+		{name: "duplicate", env: map[string]string{"FIXTURE_SOURCE_MODE": "duplicate"}},
+		{name: "helper failure", env: map[string]string{"FAKE_GO_RUN_FAIL": "1"}},
 		{name: "missing runner temp", env: map[string]string{"OMIT_RUNNER_TEMP": "1"}},
 		{name: "missing run identity", env: map[string]string{"OMIT_RUN_ID": "1"}},
 	}
@@ -65,11 +67,11 @@ func TestIntegrationEntrypointRefusesInvalidOrAmbiguousInventory(t *testing.T) {
 			if run.exitCode == 0 {
 				t.Fatalf("invalid inventory/input returned success; commands:\n%s", run.commands)
 			}
-			if strings.Contains(run.commands, "go test") {
-				t.Fatalf("invalid inventory/input reached go test: %s", run.commands)
+			if len(run.calls["go-test"]) != 0 {
+				t.Fatalf("invalid inventory/input reached go test: %#v", run.calls["go-test"])
 			}
-			if strings.Contains(run.commands, "docker container create") {
-				t.Fatalf("invalid inventory/input allocated an emulator: %s", run.commands)
+			if len(run.calls["docker-create"]) != 0 {
+				t.Fatalf("invalid inventory/input allocated an emulator: %#v", run.calls["docker-create"])
 			}
 		})
 	}
@@ -80,11 +82,11 @@ func TestIntegrationEntrypointRefusesOccupiedEndpointWithoutTouchingItsOwner(t *
 	if run.exitCode == 0 {
 		t.Fatalf("occupied endpoint returned success; output:\n%s", run.output)
 	}
-	if strings.Contains(run.commands, "docker container create") || strings.Contains(run.commands, "docker container rm") {
-		t.Fatalf("occupied endpoint caused Docker mutation: %s", run.commands)
+	if len(run.calls["docker-create"]) != 0 || len(run.calls["docker-rm"]) != 0 {
+		t.Fatalf("occupied endpoint caused Docker mutation: create=%#v remove=%#v", run.calls["docker-create"], run.calls["docker-rm"])
 	}
-	if strings.Contains(run.commands, "go test") {
-		t.Fatalf("occupied endpoint reached go test: %s", run.commands)
+	if len(run.calls["go-test"]) != 0 {
+		t.Fatalf("occupied endpoint reached go test: %#v", run.calls["go-test"])
 	}
 }
 
@@ -108,17 +110,32 @@ func TestIntegrationEntrypointFailsClosedAcrossStartupTestAndCleanupFailures(t *
 			if run.exitCode == 0 {
 				t.Fatalf("failure returned success; output:\n%s", run.output)
 			}
-			if got := strings.Contains(run.commands, "go test"); got != tc.wantTest {
-				t.Fatalf("go test presence = %v, want %v; commands:\n%s", got, tc.wantTest, run.commands)
+			if got := len(run.calls["go-test"]) != 0; got != tc.wantTest {
+				t.Fatalf("go test presence = %v, want %v; calls=%#v", got, tc.wantTest, run.calls["go-test"])
 			}
 			if tc.wantExactRemove {
-				requireOwnedCleanup(t, run.commands)
+				requireOwnedCleanup(t, run)
 			}
-			if strings.Contains(run.commands, "docker rm") || strings.Contains(run.commands, "docker container prune") {
-				t.Fatalf("cleanup used a shared name or prune route: %s", run.commands)
+			if tc.env["FAKE_MALFORMED_CID"] == "1" && len(run.calls["docker-rm"]) != 0 {
+				t.Fatalf("malformed CID reached remove: %#v", run.calls["docker-rm"])
+			}
+			if len(run.calls["docker-prune"]) != 0 {
+				t.Fatalf("cleanup used prune: %#v", run.calls["docker-prune"])
 			}
 		})
 	}
+}
+
+func TestIntegrationEntrypointBoundsReadinessAndCleansOwnedResources(t *testing.T) {
+	run := runIntegrationEntrypoint(t, map[string]string{"FAKE_READY": "0"})
+	if run.exitCode == 0 {
+		t.Fatalf("readiness failure returned success; output:\n%s", run.output)
+	}
+	sleeps := len(run.calls["sleep"])
+	if sleeps == 0 || sleeps > 30 {
+		t.Fatalf("readiness sleep calls = %d, want 1..30", sleeps)
+	}
+	requireOwnedCleanup(t, run)
 }
 
 func TestIntegrationEntrypointCleansOwnedResourcesOnTermination(t *testing.T) {
@@ -126,7 +143,7 @@ func TestIntegrationEntrypointCleansOwnedResourcesOnTermination(t *testing.T) {
 	if run.exitCode != 143 {
 		t.Fatalf("terminated entrypoint exit = %d, want 143; output:\n%s", run.exitCode, run.output)
 	}
-	requireOwnedCleanup(t, run.commands)
+	requireOwnedCleanup(t, run)
 }
 
 func TestIntegrationEntrypointPreservesSubprocessStatusAndPromotesCleanupFailure(t *testing.T) {
@@ -172,6 +189,10 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 	if err != nil {
 		t.Fatalf("read integration entrypoint: %v", err)
 	}
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("resolve Go toolchain: %v", err)
+	}
 
 	sandbox := t.TempDir()
 	scriptPath := filepath.Join(sandbox, integrationEntrypoint)
@@ -181,24 +202,17 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 	if err := os.WriteFile(scriptPath, scriptBytes, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{
-		"unit_test.go": "package main\nfunc TestUnitOwnsEndpoint() {}\n",
-		"tagged_integration_test.go": "//go:build integration\n\npackage main\nfunc TestTaggedPrimary() {}\nfunc TestAuditBoundary() {}\nfunc TestNativeCompatibility() {}\n",
-	} {
-		if err := os.WriteFile(filepath.Join(sandbox, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeGoFixture(t, sandbox, overrides["FIXTURE_SOURCE_MODE"])
 
 	binDir := filepath.Join(sandbox, "bin")
+	stateDir := filepath.Join(sandbox, "state")
 	if err := os.Mkdir(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	commandLog := filepath.Join(sandbox, "commands.log")
-	stateDir := filepath.Join(sandbox, "state")
 	if err := os.Mkdir(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	commandLog := filepath.Join(sandbox, "commands.log")
 	writeCommandDouble(t, binDir, "go", fakeGoCommand)
 	writeCommandDouble(t, binDir, "docker", fakeDockerCommand)
 	writeCommandDouble(t, binDir, "curl", fakeCurlCommand)
@@ -211,9 +225,9 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 	}
 	env := append([]string{}, os.Environ()...)
 	env = setEnvironment(env, "PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env = setEnvironment(env, "REAL_GO", realGo)
 	env = setEnvironment(env, "FAKE_COMMAND_LOG", commandLog)
 	env = setEnvironment(env, "FAKE_STATE_DIR", stateDir)
-	env = setEnvironment(env, "FAKE_INTEGRATION_TESTS", "TestTaggedPrimary\nTestAuditBoundary\nTestNativeCompatibility")
 	env = setEnvironment(env, "FAKE_READY", "1")
 	env = setEnvironment(env, "RUNNER_TEMP", runnerTemp)
 	env = setEnvironment(env, "GITHUB_RUN_ID", "12345")
@@ -228,13 +242,18 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 		env = unsetEnvironment(env, "GITHUB_RUN_ID")
 	}
 
-	command := exec.Command("bash", scriptPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "bash", scriptPath)
 	command.Dir = sandbox
 	command.Env = env
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
 	err = command.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("entrypoint exceeded the harness deadline; output:\n%s", output.String())
+	}
 	exitCode := 0
 	if err != nil {
 		var exitError *exec.ExitError
@@ -247,13 +266,53 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 	if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatal(readErr)
 	}
-	return entrypointRun{exitCode: exitCode, output: output.String(), commands: string(commands)}
+	host, readErr := os.ReadFile(filepath.Join(stateDir, "go-test-host"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	return entrypointRun{exitCode: exitCode, output: output.String(), commands: string(commands), calls: readRecordedCalls(t, stateDir), runnerTemp: runnerTemp, goTestHost: string(host)}
 }
+
+func writeGoFixture(t *testing.T, directory, mode string) {
+	t.Helper()
+	files := map[string]string{
+		"go.mod":       "module example.com/integration-entrypoint-fixture\n\ngo 1.22\n",
+		"main.go":      "package main\n",
+		"unit_test.go": "package main\n\nimport \"testing\"\n\nfunc TestUnitOwnsEndpoint(t *testing.T) {}\n",
+		"variant_integration_test.go": "//go:build integration && extra\n\npackage main\n\nimport \"testing\"\n\nfunc TestWrongTagVariant(t *testing.T) {}\n",
+	}
+	switch mode {
+	case "empty":
+		files["tagged_integration_test.go"] = "//go:build integration\n\npackage main\n"
+	case "invalid-signature":
+		files["tagged_integration_test.go"] = "//go:build integration\n\npackage main\n\nfunc TestInvalidSignature() {}\n"
+	case "duplicate":
+		files["tagged_integration_test.go"] = validTaggedFixture
+		files["duplicate_integration_test.go"] = "//go:build integration\n\npackage main\n\nimport \"testing\"\n\nfunc TestTaggedPrimary(t *testing.T) {}\n"
+	default:
+		files["tagged_integration_test.go"] = validTaggedFixture
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+const validTaggedFixture = `//go:build integration
+
+package main
+
+import "testing"
+
+func TestTaggedPrimary(t *testing.T) {}
+func TestAuditBoundary(t *testing.T) {}
+func TestNativeCompatibility(t *testing.T) {}
+`
 
 func writeCommandDouble(t *testing.T, directory, name, body string) {
 	t.Helper()
-	path := filepath.Join(directory, name)
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -274,6 +333,33 @@ func unsetEnvironment(environment []string, key string) []string {
 	return filtered
 }
 
+func readRecordedCalls(t *testing.T, stateDir string) map[string][][]string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(stateDir, "*.argv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(paths)
+	calls := map[string][][]string{}
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := bytes.Split(content, []byte{0})
+		if len(parts) > 0 && len(parts[len(parts)-1]) == 0 {
+			parts = parts[:len(parts)-1]
+		}
+		argv := make([]string, len(parts))
+		for i, part := range parts {
+			argv[i] = string(part)
+		}
+		name := strings.SplitN(filepath.Base(path), ".", 2)[0]
+		calls[name] = append(calls[name], argv)
+	}
+	return calls
+}
+
 func readRepositoryFile(t *testing.T, name string) string {
 	t.Helper()
 	content, err := os.ReadFile(name)
@@ -283,74 +369,103 @@ func readRepositoryFile(t *testing.T, name string) string {
 	return string(content)
 }
 
-func requireCommand(t *testing.T, commands string, parts ...string) {
+func requireCall(t *testing.T, run entrypointRun, name string, want []string) {
 	t.Helper()
-	for _, line := range strings.Split(commands, "\n") {
-		matched := true
-		for _, part := range parts {
-			matched = matched && strings.Contains(line, part)
-		}
-		if matched {
+	for _, got := range run.calls[name] {
+		if slicesEqual(got, want) {
 			return
 		}
 	}
-	t.Fatalf("command containing %q not found:\n%s", parts, commands)
+	t.Fatalf("%s call %q not found in %#v", name, want, run.calls[name])
 }
 
-func commandLine(t *testing.T, commands, prefix string) string {
+func requireCallPrefix(t *testing.T, run entrypointRun, name string, prefix []string) {
 	t.Helper()
-	for _, line := range strings.Split(commands, "\n") {
-		if strings.Contains(line, prefix) {
-			return line
-		}
-	}
-	t.Fatalf("%s command not found:\n%s", prefix, commands)
-	return ""
-}
-
-func requireCommandWithout(t *testing.T, commands, required, forbidden string) {
-	t.Helper()
-	for _, line := range strings.Split(commands, "\n") {
-		if strings.Contains(line, required) && !strings.Contains(line, forbidden) {
+	for _, got := range run.calls[name] {
+		if len(got) >= len(prefix) && slicesEqual(got[:len(prefix)], prefix) {
 			return
 		}
 	}
-	t.Fatalf("command containing %q without %q not found:\n%s", required, forbidden, commands)
+	t.Fatalf("%s call prefix %q not found in %#v", name, prefix, run.calls[name])
 }
 
-func requireOwnedCleanup(t *testing.T, commands string) {
+func requireOnlyCall(t *testing.T, run entrypointRun, name string, want []string) {
 	t.Helper()
-	line := commandLine(t, commands, "docker container rm")
-	if !strings.Contains(line, strings.Repeat("a", 64)) || !strings.Contains(line, "--force") {
-		t.Fatalf("cleanup did not remove the exact owned CID: %s", line)
+	if len(run.calls[name]) != 1 || !slicesEqual(run.calls[name][0], want) {
+		t.Fatalf("%s calls = %#v, want exactly %#v", name, run.calls[name], want)
 	}
-	requireCommand(t, commands, "docker container ls", "--filter", "id="+strings.Repeat("a", 64))
+}
+
+func slicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	return true
+}
+
+func requirePinnedCreate(t *testing.T, run entrypointRun) {
+	t.Helper()
+	if len(run.calls["docker-create"]) != 1 {
+		t.Fatalf("docker create calls = %#v, want one", run.calls["docker-create"])
+	}
+	got := run.calls["docker-create"][0]
+	if len(got) != 11 || !slicesEqual(got[:3], []string{"container", "create", "--cidfile"}) {
+		t.Fatalf("docker create argv = %#v", got)
+	}
+	if !strings.HasPrefix(got[3], run.runnerTemp+string(os.PathSeparator)) || filepath.Base(got[3]) != "container.id" {
+		t.Fatalf("cidfile is outside owned scratch: %q", got[3])
+	}
+	wantTail := []string{"--name", "harness-review-12345-1", "--publish", "127.0.0.1:9010:9010", "--publish", "127.0.0.1:9020:9020", emulatorImage}
+	if !slicesEqual(got[4:], wantTail) {
+		t.Fatalf("docker create tail = %#v, want %#v", got[4:], wantTail)
+	}
+}
+
+func requireReadinessProbes(t *testing.T, run entrypointRun) {
+	t.Helper()
+	requireCall(t, run, "curl", []string{"--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://127.0.0.1:9020/"})
+	requireCall(t, run, "timeout", []string{"2s", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9010"})
+}
+
+func requireOwnedCleanup(t *testing.T, run entrypointRun) {
+	t.Helper()
+	requireOnlyCall(t, run, "docker-rm", []string{"container", "rm", "--force", ownedContainerID})
+	requireCall(t, run, "docker-ls", []string{"container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id=" + ownedContainerID})
 }
 
 const commandPrelude = `#!/usr/bin/env bash
 set -u
-printf '%s' "${0##*/}" >>"$FAKE_COMMAND_LOG"
+name="${0##*/}"
+count_file="$FAKE_STATE_DIR/$name.count"
+count=0
+if [[ -f "$count_file" ]]; then count="$(<"$count_file")"; fi
+count=$((count+1))
+printf '%s' "$count" >"$count_file"
+printf -v sequence '%04d' "$count"
+printf '%s\0' "$@" >"$FAKE_STATE_DIR/$name.$sequence.argv"
+printf '%s' "$name" >>"$FAKE_COMMAND_LOG"
 printf ' %q' "$@" >>"$FAKE_COMMAND_LOG"
 printf '\n' >>"$FAKE_COMMAND_LOG"
 `
 
 var fakeGoCommand = commandPrelude + `
 case "${1:-}" in
-  list)
-    if [[ " $* " == *" -tags=integration "* ]]; then
-      printf '%s\n' unit_test.go tagged_integration_test.go
-    else
-      printf '%s\n' unit_test.go
-    fi
-    ;;
+  list) exec "$REAL_GO" "$@" ;;
   run)
-    printf '%b\n' "${FAKE_INTEGRATION_TESTS:-}"
+    [[ "${FAKE_GO_RUN_FAIL:-0}" == 1 ]] && exit 41
+    exec "$REAL_GO" "$@"
     ;;
   test)
-	  if [[ "${FAKE_GO_SIGNAL_PARENT:-0}" == 1 ]]; then
-	    kill -TERM "$PPID"
-	    exit 0
-	  fi
+    cp "$FAKE_STATE_DIR/go.$sequence.argv" "$FAKE_STATE_DIR/go-test.0001.argv"
+    printf '%s' "${SPANNER_EMULATOR_HOST:-}" >"$FAKE_STATE_DIR/go-test-host"
+    if [[ "${FAKE_GO_SIGNAL_PARENT:-0}" == 1 ]]; then
+      kill -TERM "$PPID"
+      exit 0
+    fi
     exit "${FAKE_GO_TEST_EXIT:-0}"
     ;;
   *) exit 91 ;;
@@ -361,20 +476,29 @@ var fakeDockerCommand = commandPrelude + `
 cid="$(printf 'a%.0s' {1..64})"
 case "${1:-} ${2:-}" in
   "container create")
-	[[ "${FAKE_DOCKER_CREATE_FAIL:-0}" == 1 ]] && exit 1
+    cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-create.0001.argv"
+    [[ "${FAKE_DOCKER_CREATE_FAIL:-0}" == 1 ]] && exit 1
     for ((i=1;i<=$#;i++)); do
       if [[ "${!i}" == "--cidfile" ]]; then j=$((i+1)); cidfile="${!j}"; fi
     done
     if [[ "${FAKE_MALFORMED_CID:-0}" == 1 ]]; then printf 'not-an-owned-id\n' >"$cidfile"; else printf '%s\n' "$cid" >"$cidfile"; fi
     ;;
-  "container start") touch "$FAKE_STATE_DIR/started" ;;
-  "container ls") [[ -e "$FAKE_STATE_DIR/removed" ]] || printf '%s\n' "$cid" ;;
+  "container start")
+    cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-start.0001.argv"
+    touch "$FAKE_STATE_DIR/started"
+    ;;
+  "container ls")
+    cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-ls.$sequence.argv"
+    [[ -e "$FAKE_STATE_DIR/removed" ]] || printf '%s\n' "$cid"
+    ;;
   "container rm")
+    cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-rm.0001.argv"
     [[ "${FAKE_DOCKER_REMOVE_FAIL:-0}" == 1 ]] && exit 1
     [[ "$*" == *"$cid"* ]] || exit 92
     touch "$FAKE_STATE_DIR/removed"
     ;;
-  "container logs") ;;
+  "container logs") cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-logs.0001.argv" ;;
+  "container prune") cp "$FAKE_STATE_DIR/docker.$sequence.argv" "$FAKE_STATE_DIR/docker-prune.0001.argv" ;;
   *) exit 93 ;;
 esac
 `
