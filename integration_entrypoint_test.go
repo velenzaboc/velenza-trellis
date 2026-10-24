@@ -213,9 +213,33 @@ func TestIntegrationEntrypointPreservesSubprocessStatusAndPromotesCleanupFailure
 func TestIntegrationEntrypointConsumersUseOneBoundaryAndKeepUnitTier(t *testing.T) {
 	makefile := readRepositoryFile(t, "Makefile")
 	workflow := readRepositoryFile(t, filepath.Join(".github", "workflows", "ci.yml"))
-	requireOnlyExecutableBoundary(t, "Makefile test-integration", makeRecipes(makefile, "test-integration"), []string{"./" + integrationEntrypoint})
+	requireSharedIntegrationBoundary(t, "Makefile test-integration", makeRecipes(makefile, "test-integration"))
 	requireOnlyExecutableBoundary(t, "Makefile test-unit", makeRecipes(makefile, "test-unit"), []string{"go vet ./...", "go test ./..."})
-	requireOnlyExecutableBoundary(t, "CI integration step", workflowIntegrationRuns(workflow), []string{"./" + integrationEntrypoint})
+	requireSharedIntegrationBoundary(t, "CI integration step", workflowIntegrationRuns(workflow))
+}
+
+func TestIntegrationEntrypointConsumerAcceptsOnlyDirectOrBashInvocation(t *testing.T) {
+	for _, source := range []string{
+		"\t@./scripts/test-integration.sh\n",
+		"\t@bash ./scripts/test-integration.sh\n",
+	} {
+		if !isSharedIntegrationBoundary([]string{source}) {
+			t.Fatalf("shared integration boundary rejected permitted invocation %q", source)
+		}
+	}
+	for _, source := range []string{
+		"\t@sh ./scripts/test-integration.sh\n",
+		"\t@env bash ./scripts/test-integration.sh\n",
+		"\t@bash ./scripts/test-integration.sh\n\t@echo extra\n",
+		"\t@bash ./scripts/other-integration.sh\n",
+	} {
+		if isSharedIntegrationBoundary([]string{source}) {
+			t.Fatalf("shared integration boundary accepted foreign or extra invocation %q", source)
+		}
+	}
+	if isSharedIntegrationBoundary([]string{"\t@./scripts/test-integration.sh\n", "\t@bash ./scripts/test-integration.sh\n"}) {
+		t.Fatal("shared integration boundary accepted duplicate consumers")
+	}
 }
 
 func TestIntegrationEntrypointConsumerParsersExposeDuplicateExecutableBoundaries(t *testing.T) {
@@ -512,6 +536,22 @@ func requireOnlyExecutableBoundary(t *testing.T, name string, sources []string, 
 	got := executableLines(sources[0])
 	if !slicesEqual(got, want) {
 		t.Fatalf("%s executable lines = %#v, want %#v", name, got, want)
+	}
+}
+
+func isSharedIntegrationBoundary(sources []string) bool {
+	if len(sources) != 1 {
+		return false
+	}
+	got := executableLines(sources[0])
+	return slicesEqual(got, []string{"./" + integrationEntrypoint}) ||
+		slicesEqual(got, []string{"bash ./" + integrationEntrypoint})
+}
+
+func requireSharedIntegrationBoundary(t *testing.T, name string, sources []string) {
+	t.Helper()
+	if !isSharedIntegrationBoundary(sources) {
+		t.Fatalf("%s must contain exactly one direct or Bash shared integration entrypoint; got %#v", name, sources)
 	}
 }
 
