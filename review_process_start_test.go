@@ -110,21 +110,14 @@ func reviewStartETXTBSY(cmd *exec.Cmd) error {
 	return &os.PathError{Op: "fork/exec", Path: cmd.Path, Err: syscall.ETXTBSY}
 }
 
-func reviewNoBackoff(context.Context, time.Duration) error { return nil }
-
-// reviewProcessStartHooks is the expected per-call test seam. Production calls
-// omit it; tests inject only Start and context-aware backoff behavior while the
-// real reviewRunProcess continues to own command construction, Wait, bounded
-// output, its single deadline, and private executable cleanup.
-func reviewStartHooks(start func(*exec.Cmd) error, backoff func(context.Context, time.Duration) error) reviewProcessStartHooks {
-	return reviewProcessStartHooks{start: start, backoff: backoff}
-}
-
+// reviewRunProcessWithStart is the expected unexported per-call seam. The
+// production reviewRunProcess wrapper supplies cmd.Start directly; tests can
+// replace only that pre-start operation without replacing command setup, Wait,
+// the original deadline, bounded output, or private executable cleanup.
 func TestReviewRunProcessRetriesTypedPreStartETXTBSYAndPreservesBoundary(t *testing.T) {
 	config, program := reviewStartFixture(t, "observe", "fixed", "")
 	input := []byte(`{"kind":"review","value":"exact"}`)
 	starts := 0
-	backoffs := 0
 	start := func(cmd *exec.Cmd) error {
 		starts++
 		if starts == 1 {
@@ -132,19 +125,12 @@ func TestReviewRunProcessRetriesTypedPreStartETXTBSYAndPreservesBoundary(t *test
 		}
 		return cmd.Start()
 	}
-	backoff := func(ctx context.Context, delay time.Duration) error {
-		backoffs++
-		if ctx.Err() != nil || delay <= 0 {
-			t.Fatalf("retry backoff received invalid context/delay: err=%v delay=%v", ctx.Err(), delay)
-		}
-		return nil
-	}
-	captured, err := reviewRunProcess(context.Background(), config, program, input, reviewStartHooks(start, backoff))
+	captured, err := reviewRunProcessWithStart(context.Background(), config, program, input, start)
 	if err != nil {
 		t.Fatalf("transient typed ETXTBSY did not recover: %v", err)
 	}
-	if starts != 2 || backoffs != 1 {
-		t.Fatalf("start/backoff calls = %d/%d, want 2/1", starts, backoffs)
+	if starts != 2 {
+		t.Fatalf("start calls = %d, want 2", starts)
 	}
 	if captured.Generation != config.Generation || captured.ExecutableSHA256 != config.ExecutableSHA256 || captured.ExitCode != 0 || captured.Stderr != "" {
 		t.Fatalf("captured process identity/result changed: %#v", captured)
@@ -167,28 +153,16 @@ func TestReviewRunProcessRetriesTypedPreStartETXTBSYAndPreservesBoundary(t *test
 func TestReviewRunProcessBoundsETXTBSYAttemptsUnderOneDeadline(t *testing.T) {
 	config, program := reviewStartFixture(t, "observe")
 	starts := 0
-	deadlines := []time.Time{}
-	_, err := reviewRunProcess(context.Background(), config, program, nil, reviewStartHooks(
+	_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
 		func(cmd *exec.Cmd) error {
 			starts++
 			return reviewStartETXTBSY(cmd)
-		},
-		func(ctx context.Context, delay time.Duration) error {
-			deadline, ok := ctx.Deadline()
-			if !ok || delay <= 0 {
-				t.Fatalf("retry lacks the configured deadline/backoff: ok=%v delay=%v", ok, delay)
-			}
-			deadlines = append(deadlines, deadline)
-			return nil
-		}))
+		})
 	if err == nil || !errors.Is(err, syscall.ETXTBSY) {
 		t.Fatalf("ETXTBSY exhaustion = %v, want typed refusal", err)
 	}
-	if starts != 3 || len(deadlines) != 2 {
-		t.Fatalf("exhaustion start/backoff calls = %d/%d, want 3/2", starts, len(deadlines))
-	}
-	if !deadlines[0].Equal(deadlines[1]) {
-		t.Fatalf("retry reset the configured deadline: %v != %v", deadlines[0], deadlines[1])
+	if starts != 3 {
+		t.Fatalf("exhaustion start calls = %d, want 3", starts)
 	}
 }
 
@@ -204,12 +178,10 @@ func TestReviewRunProcessDoesNotRetryOtherStartFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			starts := 0
-			backoffs := 0
-			_, err := reviewRunProcess(context.Background(), config, program, nil, reviewStartHooks(
-				func(*exec.Cmd) error { starts++; return tc.err },
-				func(context.Context, time.Duration) error { backoffs++; return nil }))
-			if err == nil || starts != 1 || backoffs != 0 {
-				t.Fatalf("nonretryable start result = err:%v starts:%d backoffs:%d", err, starts, backoffs)
+			_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
+				func(*exec.Cmd) error { starts++; return tc.err })
+			if err == nil || starts != 1 {
+				t.Fatalf("nonretryable start result = err:%v starts:%d", err, starts)
 			}
 		})
 	}
@@ -221,8 +193,8 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		starts := 0
-		_, err := reviewRunProcess(ctx, config, program, nil, reviewStartHooks(
-			func(*exec.Cmd) error { starts++; return nil }, reviewNoBackoff))
+		_, err := reviewRunProcessWithStart(ctx, config, program, nil,
+			func(*exec.Cmd) error { starts++; return nil })
 		if !errors.Is(err, context.Canceled) || starts != 0 {
 			t.Fatalf("pre-cancel result = err:%v starts:%d", err, starts)
 		}
@@ -230,24 +202,33 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 	t.Run("cancelled_during_backoff", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		starts := 0
-		_, err := reviewRunProcess(ctx, config, program, nil, reviewStartHooks(
-			func(cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) },
-			func(ctx context.Context, _ time.Duration) error {
-				cancel()
-				<-ctx.Done()
-				return ctx.Err()
-			}))
+		first := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			<-first
+			cancel()
+		}()
+		_, err := reviewRunProcessWithStart(ctx, config, program, nil,
+			func(cmd *exec.Cmd) error {
+				starts++
+				if starts == 1 {
+					close(first)
+				}
+				return reviewStartETXTBSY(cmd)
+			})
+		<-done
 		if !errors.Is(err, context.Canceled) || starts != 1 {
 			t.Fatalf("backoff cancellation result = err:%v starts:%d", err, starts)
 		}
 	})
 	t.Run("deadline_during_backoff", func(t *testing.T) {
-		deadlineCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		config.TimeoutMilliseconds = 1
+		deadlineCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		starts := 0
-		_, err := reviewRunProcess(deadlineCtx, config, program, nil, reviewStartHooks(
-			func(cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) },
-			func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() }))
+		_, err := reviewRunProcessWithStart(deadlineCtx, config, program, nil,
+			func(cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) })
 		if !errors.Is(err, context.DeadlineExceeded) || starts != 1 {
 			t.Fatalf("backoff deadline result = err:%v starts:%d", err, starts)
 		}
@@ -259,8 +240,8 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		marker := filepath.Join(t.TempDir(), "starts")
 		config, program := reviewStartFixture(t, "nonzero", marker)
 		starts := 0
-		_, err := reviewRunProcess(context.Background(), config, program, nil, reviewStartHooks(
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() }, reviewNoBackoff))
+		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
+			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("nonzero child result = err:%v starts:%d", err, starts)
 		}
@@ -273,8 +254,8 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		config, program := reviewStartFixture(t, "overflow")
 		config.MaxOutputBytes = 32
 		starts := 0
-		_, err := reviewRunProcess(context.Background(), config, program, nil, reviewStartHooks(
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() }, reviewNoBackoff))
+		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
+			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("overflow child result = err:%v starts:%d", err, starts)
 		}
@@ -283,12 +264,27 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		config, program := reviewStartFixture(t, "timeout")
 		config.TimeoutMilliseconds = 25
 		starts := 0
-		_, err := reviewRunProcess(context.Background(), config, program, nil, reviewStartHooks(
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() }, reviewNoBackoff))
+		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
+			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("timed out child result = err:%v starts:%d", err, starts)
 		}
 	})
+}
+
+func TestReviewRunProcessProductionEntryUsesFixedActualStart(t *testing.T) {
+	config, program := reviewStartFixture(t, "observe", "production-entry")
+	captured, err := reviewRunProcess(context.Background(), config, program, []byte("production-input"))
+	if err != nil {
+		t.Fatalf("production entry failed actual child start: %v", err)
+	}
+	var observed reviewStartChildObservation
+	if err := json.Unmarshal([]byte(captured.Stdout), &observed); err != nil {
+		t.Fatal(err)
+	}
+	if observed.Input != "production-input" || !equalStrings(observed.Args, []string{"production-entry"}) {
+		t.Fatalf("production entry changed configured stdin/argv: %#v", observed)
+	}
 }
 
 func equalStrings(left, right []string) bool {
