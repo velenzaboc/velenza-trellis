@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +67,7 @@ func TestReviewProcessStartChild(t *testing.T) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(93)
 		}
+		os.Exit(0)
 	case "nonzero":
 		if len(os.Args) != marker+3 {
 			os.Exit(94)
@@ -111,14 +115,15 @@ func reviewStartETXTBSY(cmd *exec.Cmd) error {
 }
 
 // reviewRunProcessWithStart is the expected unexported per-call seam. The
-// production reviewRunProcess wrapper supplies cmd.Start directly; tests can
-// replace only that pre-start operation without replacing command setup, Wait,
-// the original deadline, bounded output, or private executable cleanup.
+// production reviewRunProcess wrapper supplies an inline cmd.Start call;
+// tests can observe the actual attempt context and replace only the pre-start
+// operation without replacing command setup, Wait, the original deadline,
+// bounded output, or private executable cleanup.
 func TestReviewRunProcessRetriesTypedPreStartETXTBSYAndPreservesBoundary(t *testing.T) {
 	config, program := reviewStartFixture(t, "observe", "fixed", "")
 	input := []byte(`{"kind":"review","value":"exact"}`)
 	starts := 0
-	start := func(cmd *exec.Cmd) error {
+	start := func(_ context.Context, cmd *exec.Cmd) error {
 		starts++
 		if starts == 1 {
 			return reviewStartETXTBSY(cmd)
@@ -153,9 +158,17 @@ func TestReviewRunProcessRetriesTypedPreStartETXTBSYAndPreservesBoundary(t *test
 func TestReviewRunProcessBoundsETXTBSYAttemptsUnderOneDeadline(t *testing.T) {
 	config, program := reviewStartFixture(t, "observe")
 	starts := 0
+	deadlines := []time.Time{}
+	remaining := []time.Duration{}
 	_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
-		func(cmd *exec.Cmd) error {
+		func(attempt context.Context, cmd *exec.Cmd) error {
 			starts++
+			deadline, ok := attempt.Deadline()
+			if !ok {
+				t.Fatal("start attempt has no configured deadline")
+			}
+			deadlines = append(deadlines, deadline)
+			remaining = append(remaining, time.Until(deadline))
 			return reviewStartETXTBSY(cmd)
 		})
 	if err == nil || !errors.Is(err, syscall.ETXTBSY) {
@@ -163,6 +176,12 @@ func TestReviewRunProcessBoundsETXTBSYAttemptsUnderOneDeadline(t *testing.T) {
 	}
 	if starts != 3 {
 		t.Fatalf("exhaustion start calls = %d, want 3", starts)
+	}
+	if len(deadlines) != 3 || !deadlines[0].Equal(deadlines[1]) || !deadlines[1].Equal(deadlines[2]) {
+		t.Fatalf("start attempts did not retain one absolute deadline: %v", deadlines)
+	}
+	if !(remaining[0] > remaining[1] && remaining[1] > remaining[2]) {
+		t.Fatalf("retry attempts did not consume the original time budget: %v", remaining)
 	}
 }
 
@@ -179,7 +198,7 @@ func TestReviewRunProcessDoesNotRetryOtherStartFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			starts := 0
 			_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
-				func(*exec.Cmd) error { starts++; return tc.err })
+				func(context.Context, *exec.Cmd) error { starts++; return tc.err })
 			if err == nil || starts != 1 {
 				t.Fatalf("nonretryable start result = err:%v starts:%d", err, starts)
 			}
@@ -194,7 +213,7 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 		cancel()
 		starts := 0
 		_, err := reviewRunProcessWithStart(ctx, config, program, nil,
-			func(*exec.Cmd) error { starts++; return nil })
+			func(context.Context, *exec.Cmd) error { starts++; return nil })
 		if !errors.Is(err, context.Canceled) || starts != 0 {
 			t.Fatalf("pre-cancel result = err:%v starts:%d", err, starts)
 		}
@@ -210,7 +229,7 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 			cancel()
 		}()
 		_, err := reviewRunProcessWithStart(ctx, config, program, nil,
-			func(cmd *exec.Cmd) error {
+			func(_ context.Context, cmd *exec.Cmd) error {
 				starts++
 				if starts == 1 {
 					close(first)
@@ -228,7 +247,7 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 		defer cancel()
 		starts := 0
 		_, err := reviewRunProcessWithStart(deadlineCtx, config, program, nil,
-			func(cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) })
+			func(_ context.Context, cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) })
 		if !errors.Is(err, context.DeadlineExceeded) || starts != 1 {
 			t.Fatalf("backoff deadline result = err:%v starts:%d", err, starts)
 		}
@@ -241,7 +260,7 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		config, program := reviewStartFixture(t, "nonzero", marker)
 		starts := 0
 		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
+			func(_ context.Context, cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("nonzero child result = err:%v starts:%d", err, starts)
 		}
@@ -255,7 +274,7 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		config.MaxOutputBytes = 32
 		starts := 0
 		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
+			func(_ context.Context, cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("overflow child result = err:%v starts:%d", err, starts)
 		}
@@ -265,7 +284,7 @@ func TestReviewRunProcessNeverRetriesAStartedChildFailure(t *testing.T) {
 		config.TimeoutMilliseconds = 25
 		starts := 0
 		_, err := reviewRunProcessWithStart(context.Background(), config, program, nil,
-			func(cmd *exec.Cmd) error { starts++; return cmd.Start() })
+			func(_ context.Context, cmd *exec.Cmd) error { starts++; return cmd.Start() })
 		if err == nil || starts != 1 {
 			t.Fatalf("timed out child result = err:%v starts:%d", err, starts)
 		}
@@ -285,6 +304,80 @@ func TestReviewRunProcessProductionEntryUsesFixedActualStart(t *testing.T) {
 	if observed.Input != "production-input" || !equalStrings(observed.Args, []string{"production-entry"}) {
 		t.Fatalf("production entry changed configured stdin/argv: %#v", observed)
 	}
+}
+
+func TestReviewRunProcessProductionWrapperDelegatesToRetryBoundary(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "review_source.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrapper *ast.FuncDecl
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == "reviewRunProcess" {
+			wrapper = function
+			break
+		}
+	}
+	if wrapper == nil || wrapper.Body == nil || len(wrapper.Body.List) != 1 {
+		t.Fatal("reviewRunProcess must be one fixed delegation to the retry boundary")
+	}
+	result, ok := wrapper.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(result.Results) != 1 {
+		t.Fatal("reviewRunProcess must return the retry-boundary result directly")
+	}
+	call, ok := result.Results[0].(*ast.CallExpr)
+	if !ok || astIdentifier(call.Fun) != "reviewRunProcessWithStart" || len(call.Args) != 5 {
+		t.Fatal("reviewRunProcess does not invoke the retry boundary exactly once")
+	}
+	for index, name := range []string{"ctx", "config", "program", "input"} {
+		if astIdentifier(call.Args[index]) != name {
+			t.Fatalf("retry-boundary argument %d = %q, want %q", index, astIdentifier(call.Args[index]), name)
+		}
+	}
+	requireFixedReviewStart(t, call.Args[4])
+}
+
+func requireFixedReviewStart(t *testing.T, expression ast.Expr) {
+	t.Helper()
+	function, ok := expression.(*ast.FuncLit)
+	if !ok || function.Type.Params == nil || len(function.Type.Params.List) != 2 || len(function.Body.List) != 1 {
+		t.Fatal("production retry boundary must receive one inline fixed Start function")
+	}
+	contextParameter := function.Type.Params.List[0]
+	commandParameter := function.Type.Params.List[1]
+	if !astSelector(contextParameter.Type, "context", "Context") || len(commandParameter.Names) != 1 || commandParameter.Names[0].Name != "cmd" {
+		t.Fatal("fixed Start function parameters must be context.Context and cmd *exec.Cmd")
+	}
+	star, ok := commandParameter.Type.(*ast.StarExpr)
+	if !ok || !astSelector(star.X, "exec", "Cmd") {
+		t.Fatal("fixed Start function command parameter must be *exec.Cmd")
+	}
+	result, ok := function.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(result.Results) != 1 {
+		t.Fatal("fixed Start function must directly return cmd.Start")
+	}
+	call, ok := result.Results[0].(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		t.Fatal("fixed Start function must invoke cmd.Start without arguments")
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || astIdentifier(selector.X) != "cmd" || selector.Sel.Name != "Start" {
+		t.Fatal("fixed Start function must directly return cmd.Start")
+	}
+}
+
+func astIdentifier(expression ast.Expr) string {
+	identifier, _ := expression.(*ast.Ident)
+	if identifier == nil {
+		return ""
+	}
+	return identifier.Name
+}
+
+func astSelector(expression ast.Expr, packageName, member string) bool {
+	selector, ok := expression.(*ast.SelectorExpr)
+	return ok && astIdentifier(selector.X) == packageName && selector.Sel.Name == member
 }
 
 func equalStrings(left, right []string) bool {
