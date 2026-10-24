@@ -127,8 +127,8 @@ DDL cannot be applied to the live `task-plan` database by accident.
 `experimental_query_enabled`), `task_graph_import` (bulk topologically-ordered
 admission — the migration + reseed surface), `task_graph_health`.
 
-**Task-domain verbs** (12 — `task_queries.go` and the bounded native review
-producer; in `fleet_plan_native` mode a
+**Task-domain verbs** (14 — `task_queries.go` and the bounded native review
+and execution producers; in `fleet_plan_native` mode a
 task's business fields are the live `Tasks` columns; in schema_v1 migrated
 mode they live inside `Nodes.content` JSON):
 
@@ -146,8 +146,10 @@ mode they live inside `Nodes.content` JSON):
 | `task_graph_claim` | atomically claim an empty/`UNOWNED` task for one owner/session/repository tuple; concurrent claimers resolve first-writer-wins, exact durable-tuple retries are idempotent, and only the acquiring transaction may attest optional execution coordinates |
 | `task_graph_review_produce` | execute one server-controlled independent no-tools review of exact frozen native task/slot/source inputs, then atomically insert exclusive immutable origin evidence and publish its bound acceptance reference; native mode only |
 | `task_graph_review_get` | resolve that exclusive origin by exact project/review/task/slot/input identity, validate its strict kind and current frozen generation, and refuse legacy notes, stale inputs or unavailable producer capability; native mode only |
+| `task_graph_tdd_produce` | record a bounded native execution lineage action: start against existing owned context, actual RED/GREEN through the pinned native-Go executor, or independently audited reopen; atomic exclusive evidence and existing Task/slot publication, never generic runner authority |
+| `task_graph_tdd_get` | resolve exact immutable execution/lineage evidence against current task/binding/slot/source generation, including explicitly retained unchanged-production proof after an audited fixture-only reopen; native mode only |
 
-Total: **26 verbs**.
+Total: **28 verbs**.
 
 `task_graph_project_snapshot` is the reusable application read boundary. It
 accepts a logical `project_id`, a bounded row limit, and an optional typed
@@ -584,6 +586,187 @@ evidence. Software tools/readers or a rollback that lacks this capability must f
 closed at software consuming hooks; no legacy-note bootstrap trust is permitted. An old
 generic writer cannot mint rows in the new exclusive table. Ordinary tasks and
 existing writer/succession history keep their semantics and usability.
+
+### Native execution and reopen origin (candidate relay)
+
+`task_graph_tdd_produce/get` complete the separate execution dependency above;
+they do not make independent review equivalent to executed tests. They extend
+this existing native service, not the kernel, an authorization ledger, signer,
+identity service or scheduler. The trusted installed helper is a thin client;
+its own receipt, command, reviewer label or verification flag never proves
+execution. Actual native executor qualification and the helper adapter remain
+required before combined activation. The accepted native-Go provider currently
+has only allocation/time/exit/completion receipts; until it implements the full
+source/argv/process contract below, it is unsupported and MUST refuse.
+
+**Wire and current context.** Produce accepts only `project_id`, `task_id`,
+`binding_link_id`, optional equality assertions `execution_task_id`/`slot_id`,
+`epoch`, `context_sha256`, `action` (`start`, `red`, `green`, `reopen`),
+`request_id`, `revision`, and, except start, `generation_id`, `expected_queue`
+and `previous_ref`. Reopen additionally requires nonempty `reason` (untrusted
+intent, not classification). Unknown command/argv/executable/environment,
+receipt/file/result, `verified`, fixture-kind, approval or reviewer fields
+refuse. A request selects intent and exact immutable source, never authority.
+Both operations are native-only. Resolve the existing claimed leaf, its sole
+current canonical worktree binding and coherent owner/session/repository,
+default-project session controller, and complete real software project queue
+plan/context. Do not infer an individual identity from a shared bearer/session.
+
+Start requires a verified committed base `revision` and a valid pinned executor
+capability handshake. It may have no slot. It inserts start lineage and
+publishes only leaf `note.tdd_execution_ref`; it creates no Task, owner claim,
+binding or assignment, overwrites no slot, and grants no generic runner access.
+If a slot exists it must be unique and coherent; a contradictory or capped
+lookup refuses. Existing coordinator bookkeeping may subsequently register an
+ordinary build-tests slot. Every later action requires exactly one current
+active slot matching leaf project/task, normalized repository and exact
+physical binding worktree (including any genuinely existing slot ID). Its
+actual queue, project scope, source and generation must match the request.
+The same binding-derived slot key as review origin is used, including start
+when it is a locator without an assignment. No new caller-created slot ID.
+
+Response schema `velenza_tdd_result/1` contains `action`, `idempotent`, actual
+`result`, and `tdd_ref`. A reference has `project_id`, `evidence_id` (the
+request ID), `task_id`, `execution_project_id`, `execution_task_id`, `slot_key`,
+`binding_link_id`, `action`, server-derived `generation_id`, optional
+`parent_evidence_id`, `revision`, `test_revision`, `production_revision`,
+`base_revision`, `epoch`, `context_sha256`, `input_sha256`,
+`producer_generation`, and only a genuinely existing optional `slot_id`.
+Get accepts exactly a returned reference as equality assertions. Missing,
+wrong-project/task/binding/controller/session/slot/stage/generation/source,
+stale/replayed or tampered reference refuses. Digests bind bytes, not identity
+or signatures. A missing producer/table/provider or unsupported protocol refuses
+protected progression while ordinary reads/documents remain available.
+
+**Exclusive evidence and publication.** The descriptor adds a distinct
+`tdd_evidence_table`, exclusive from ordinary and review tables. Candidate
+columns are `project_id,evidence_id,task_id,execution_project_id,
+execution_task_id,slot_key,action,generation_id,parent_evidence_id,input_sha256,
+binding_json,result_json,producer_generation,created_at`; primary key is exact
+`(project_id,evidence_id)`. Binding includes exact request/context, immutable
+source materialization, actual captured executor/audit process and current
+generation. No generic route writes this table; no historical label backfill.
+This is immutable origin/lineage evidence; current task/queue state remains in
+the existing Tasks/TaskLinks, not a parallel task-state ledger. DDL stays on the
+sanctioned schema path; tests bootstrap only isolated substrates.
+
+Execute the native process or independent reopen audit OUTSIDE any retried
+database transaction. Then one short native transaction rereads exact current
+leaf/controller/binding/slot, frozen source, current lineage and protected
+references; compares the expected generation; inserts immutable evidence;
+publishes leaf `tdd_execution_ref`; and publishes the selected slot's existing
+flat RED/audit/GREEN/reopen projections atomically. Preserve both Tasks'
+unrelated metadata and every disjoint slot. Reuse existing nil-only
+`reviewProducerFault` with stages `tdd_after_evidence_insert`,
+`tdd_after_leaf_publication`, `tdd_after_execution_publication`, after actual
+writes. Only the real-emulator tier proves rollback at all three seams.
+Start has no assignment write. Identical completed retry reads the same result
+without executing again; changed request/collision/stale generation refuses.
+Concurrent exact retries converge on one origin; transaction retries never
+rerun external work. Generic create/import/update and note writers refuse
+manufacture/change/deletion of `tdd_execution_ref` and all existing protected
+slot fields, including whole-note/slot deletion and array/singleton forms.
+Unchanged protected echoes, ordinary metadata and circuit handoffs remain usable.
+
+**Administrator executor and exact source.** `tdd_executor` uses the existing
+pinned-process pattern: `generation`, absolute `executable`,
+`executable_sha256`, fixed `args`, bounded `timeout_milliseconds` and
+`max_output_bytes`, administrator-selected absolute `go_path`, and fixed
+`packages` (initial native-Go capability `['./...']`). Verified repository
+acquisition reuses `review_producer.repositories`; source/owner lookup must not
+depend on a dirty checkout or caller file. Git objects must be immutable and
+verified; Inarch requires its authoritative verified provider or refuses.
+Acquire the entire regular-file source tree (including go.mod, dependencies'
+lock inputs, embedded files and required tests/owner), reject symlink/type/path
+escapes, and exclude `.git`. The service constructs immutable materialization:
+committed production/base layer plus exact committed locked test generation.
+A synthetic Git repository created after transfer cannot replace original
+revision identity. Every path/body/hash and the layer revision identities bind
+the source digest. No arbitrary shell, executable, argv, package pattern or
+caller environment; actual provider goPath remains root-owned and pinned.
+The process receives a fixed administrator environment, not caller secrets.
+
+Executor stdin is one strict `velenza_tdd_executor_request/1` object:
+`operation` (`capabilities` for start, otherwise `go_test_json`), `action`,
+`identity` (the resolved frozen scope/lineage, not request/retry ID),
+`source={base_revision,test_revision,production_revision,
+files:[{path,sha256,content}],sha256}`, `argv` (fixed qualified go_path followed
+by `test,-json,-count=1` and configured packages), and `input_sha256`.
+Source SHA is SHA256 of encoding/json.Marshal of source with only its sha256
+removed; input SHA uses the same existing canonical byte rule after removing
+only input_sha256. Source files are complete, sorted paths, actual committed
+regular files. The executor must verify the received bytes and exact argv
+before starting any Go process, retain descendant custody and use its guarded
+allocation. The service captures actual wrapper stdout/stderr/exit/signal and
+timeout. No local receipt path or claimed summary substitutes for this process.
+
+Stdout is one strict `velenza_tdd_executor_result/1` object with exact
+`producer_generation,input_sha256,source_sha256,argv`, capabilities
+`['native-go-test-json','immutable-source-v1','exact-argv-v1',
+'descendant-custody-v1']`, `completed`, `process_started`, actual `exit_code`,
+empty `signal`, `go_test_json` (the complete Go event stream), and
+`provider_receipt={schema_version:velenza_native_go_receipt/1,allocation_id,
+source_sha256,argv_sha256,exit_code,completed,started_at,finished_at}`.
+Capabilities must come from the actually invoked pinned process. The native
+provider must attest exact materialized source/argv and actual child completion,
+not merely allocation/time/exit. Wrapper OS exit must equal the reported Go
+exit for execution (RED1/GREEN0); start is a0 capability handshake with no test
+execution. Malformed/duplicate/oversize/truncated output, missing capability,
+wrong binding/source/argv, launch failure, timeout/signal or incomplete custody
+refuses. A controlled test executable models this protocol, proves the actual
+service process boundary and storage wiring, and is explicitly NOT native
+provider qualification or real test-execution evidence for a deployed system.
+
+**RED, review and GREEN.** RED requires actual build-tests and freezes the
+committed test revision/files/author/requirements. The service independently
+parses the captured Go JSON: at least one actual test run and assertion-failing
+test, package completion, no build-fail/compile error, zero-test/skip-only run,
+signal or startup failure. Nonzero exit alone is never RED. It publishes a
+typed ref in `slot.tdd_red_receipt` and moves only that slot to validate-tests.
+When this Task/binding has exclusive TDD start lineage, validate_tests review
+must resolve its current RED, identical test hashes/source/generation and
+actual slot; neither removal of a label/reference nor old mutable receipts
+opts out. Ordinary non-TDD review/bookkeeping remains supported. The real
+review input/output and stored origin bind `tdd_red_ref`; publication adds
+`tests.tdd_audit_receipt={review_ref,tdd_ref}` alongside existing tests.acceptance.
+Coordinator bookkeeping can then record build-code; it does not create origin.
+
+GREEN requires actual build-code, current RED, exact independent validate_tests
+origin/audit, unchanged locked tests and immutable production revision. Parse
+actual nonzero test-run/pass completion with no fail/build-fail/skip-only,
+signal or mismatch and actual exit0. Publish `slot.tdd_green_receipt` and move
+the slot to test-code. This does not prove mutation sensitivity, final review,
+installation or release; their existing testing/merge checks remain required.
+
+**Reopen and the unchanged-production exception.** Reopen requires current
+test-code, exact current GREEN/lineage, immutable repaired test revision and
+nonempty intent reason. A fresh actual independent no-tools reviewer consumes
+`kind:tdd_reopen`, full committed old/new diff and changed bodies/hashes, full
+governing owner, actual prior GREEN/test-review/production-origin references,
+and complete old/new production blob manifests. Its strict output schema
+`velenza_tdd_reopen_review/1` binds kind/input digest, zero blocking findings,
+`classification:fixture_only|production_changed`, complete `reviewed_files`,
+`production_files`, boundary flags and summary. The service separately verifies
+all immutable production blobs and the complete diff: no caller fixture flag,
+file suffix, omitted path or reviewer label can relabel changed production as
+unchanged fixtures. Incomplete/contradictory audit refuses publication.
+
+An approved reopen derives a fresh generation, appends its typed reference to
+array `slot.reopen_history`, returns build-tests, updates the actual test
+manifest from immutable source, and invalidates affected RED/test-review/audit/
+GREEN/production-acceptance projections. It never overwrites historical origin.
+If every prior independently reviewed production blob is unchanged and actual
+audit proves a test-only repair, its immutable lineage may retain that prior
+production reference. `task_graph_tdd_get` specifically verifies the historical
+review origin and exact unchanged production blobs in the current generation
+before returning `retained_production_ref`; ordinary stale review_get does not
+gain a bootstrap exception. Production changes invalidate retention. Fresh RED
+and exact new test review/audit are still required. For a fixture-only reopened
+generation, RED materializes repaired committed tests against the independently
+recorded preimplementation production base, while GREEN materializes them
+against the unchanged verified production revision. Original revision IDs and
+both layer manifests are bound; no empty production commit or invented ancestor
+is required, and no blanket new production review follows a test-only repair.
 
 Native dependency identity is one `TaskDeps.dep_id` for the normalized
 `(project_id, gates_source_id, gates_target_id, gates)` relationship. Both

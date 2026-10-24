@@ -235,7 +235,7 @@ func newReviewProducerFixture(t *testing.T) *reviewProducerFixture {
 	return newReviewProducerFixtureForProject(t,"arbor")
 }
 
-func newReviewProducerFixtureForProject(t *testing.T,project string) *reviewProducerFixture {
+func newReviewProducerFixtureForProject(t *testing.T,project string,extraDDL ...string) *reviewProducerFixture {
 	t.Helper()
 	srv, err := spannertest.NewServer("127.0.0.1:0")
 	if err != nil { t.Fatal(err) }
@@ -252,6 +252,7 @@ func newReviewProducerFixtureForProject(t *testing.T,project string) *reviewProd
 	if err != nil { t.Fatal(err) }
 	t.Cleanup(func(){ _ = admin.Close() })
 	schema := append(append([]string{},nativeCoverageSchema...),reviewProducerTestDDL)
+	schema = append(schema,extraDDL...)
 	op, err := admin.UpdateDatabaseDdl(context.Background(), &dbadminpb.UpdateDatabaseDdlRequest{Database:nativeCoverageDatabase,Statements:schema})
 	if err != nil { t.Fatal(err) }
 	if err := op.Wait(context.Background()); err != nil { t.Fatal(err) }
