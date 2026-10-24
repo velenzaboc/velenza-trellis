@@ -5,10 +5,32 @@
 Each capability requires before merge:
 
 - **Unit test** of orchestration shape with the substrate mocked. Lives in `*_test.go` alongside the file under test. Run via `make test-unit` (also the default `make test`).
-- **Integration test** against a Spanner emulator. Lives in `integration_test.go` behind the `integration` build tag. Run via `make test-integration` — starts the emulator in Docker, runs the self-provisioning suite (build-tagged), tears the emulator down.
+- **Integration test** against a Spanner emulator. Lives in test files behind the `integration` build tag. Run via `make test-integration` — the shared `scripts/test-integration.sh` entrypoint starts its own pinned emulator in Docker, runs the complete integration-only source tier, and verifies owned cleanup.
 - **Manual smoke test** documented below. Run end-to-end once after every meaningful change against the real `task-graph` database.
 
 `t.Skip` is forbidden per CLAUDE.md `feedback_no_t_skip_in_tests`. Build-tag exclusion (`//go:build integration`) is not a runtime skip — it's a compile-time variant; tests under the tag still run explicitly via `go test -tags=integration` and the Makefile.
+
+The integration entrypoint uses actual `go list` membership with and without
+`-tags=integration`, then a temporary standard-library Go AST helper to select
+every valid test in the tagged-only files. Its sorted, exact parent-test regex
+includes audit and compatibility tests regardless of naming prefix, and runs
+all their subtests. Untagged unit fixtures stay in `make test-unit`; they are
+not run against an already listening external emulator. Empty, malformed or
+duplicate selections fail before emulator creation.
+
+Local invocation needs Go, Bash, Docker, curl and `timeout`, with the emulator
+endpoints `127.0.0.1:9010` and `127.0.0.1:9020` available. An occupied endpoint
+causes refusal without touching its owner. The emulator image is pinned by
+digest, readiness is bounded to 30 attempts, and success, failure or interruption
+removes only the exact owned container ID and verifies that it is gone. Cleanup
+failure is reported as failure; subprocess failures retain their exit status.
+
+No CI identity variables are required. Scratch storage is a unique native
+temporary directory under optional `RUNNER_TEMP`, otherwise `TMPDIR` or the
+system temporary directory. When both `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`
+are available, the existing CI container label is retained; local invocations
+use a unique name. Make and the CI integration step invoke this same entrypoint
+through explicit Bash; the script does not require a filesystem executable bit.
 
 ### A note on emulator instance setup
 
