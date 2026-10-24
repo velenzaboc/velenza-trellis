@@ -12,4 +12,4 @@ test-unit:
 
 # REQUIREMENTS.md §7: run the complete integration-only tier with its own emulator.
 test-integration:
-	@./scripts/test-integration.sh
+	@bash ./scripts/test-integration.sh

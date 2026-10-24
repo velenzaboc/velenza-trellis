@@ -36,4 +36,4 @@ jobs:
         timeout-minutes: 10
         shell: bash
         run: |
-          ./scripts/test-integration.sh
+          bash ./scripts/test-integration.sh

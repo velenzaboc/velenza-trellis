@@ -29,7 +29,8 @@ No CI identity variables are required. Scratch storage is a unique native
 temporary directory under optional `RUNNER_TEMP`, otherwise `TMPDIR` or the
 system temporary directory. When both `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`
 are available, the existing CI container label is retained; local invocations
-use a unique name. Make and the CI integration step use this same entrypoint.
+use a unique name. Make and the CI integration step invoke this same entrypoint
+through explicit Bash; the script does not require a filesystem executable bit.
 
 ### A note on emulator instance setup
 
