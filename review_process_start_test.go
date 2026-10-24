@@ -114,6 +114,36 @@ func reviewStartETXTBSY(cmd *exec.Cmd) error {
 	return &os.PathError{Op: "fork/exec", Path: cmd.Path, Err: syscall.ETXTBSY}
 }
 
+type reviewControlledDeadlineContext struct {
+	deadline time.Time
+	done     chan struct{}
+}
+
+func (ctx *reviewControlledDeadlineContext) Deadline() (time.Time, bool) {
+	return ctx.deadline, true
+}
+
+func (ctx *reviewControlledDeadlineContext) Done() <-chan struct{} {
+	return ctx.done
+}
+
+func (ctx *reviewControlledDeadlineContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *reviewControlledDeadlineContext) Value(any) any {
+	return nil
+}
+
+func (ctx *reviewControlledDeadlineContext) expire() {
+	close(ctx.done)
+}
+
 // reviewRunProcessWithStart is the expected unexported per-call seam. The
 // production reviewRunProcess wrapper supplies an inline cmd.Start call;
 // tests can observe the actual attempt context and replace only the pre-start
@@ -242,12 +272,27 @@ func TestReviewRunProcessStopsBeforeStartAndDuringBackoff(t *testing.T) {
 		}
 	})
 	t.Run("deadline_during_backoff", func(t *testing.T) {
-		config.TimeoutMilliseconds = 1
-		deadlineCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
+		deadlineCtx := &reviewControlledDeadlineContext{
+			deadline: time.Now().Add(time.Minute),
+			done:     make(chan struct{}),
+		}
 		starts := 0
 		_, err := reviewRunProcessWithStart(deadlineCtx, config, program, nil,
-			func(_ context.Context, cmd *exec.Cmd) error { starts++; return reviewStartETXTBSY(cmd) })
+			func(attempt context.Context, cmd *exec.Cmd) error {
+				starts++
+				if starts != 1 {
+					t.Fatalf("deadline allowed another start: %d", starts)
+				}
+				if _, ok := attempt.Deadline(); !ok {
+					t.Fatal("first start attempt has no configured deadline")
+				}
+				deadlineCtx.expire()
+				<-attempt.Done()
+				if !errors.Is(attempt.Err(), context.DeadlineExceeded) {
+					t.Fatalf("attempt deadline result = %v", attempt.Err())
+				}
+				return reviewStartETXTBSY(cmd)
+			})
 		if !errors.Is(err, context.DeadlineExceeded) || starts != 1 {
 			t.Fatalf("backoff deadline result = err:%v starts:%d", err, starts)
 		}
