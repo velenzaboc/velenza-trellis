@@ -213,9 +213,20 @@ func TestIntegrationEntrypointPreservesSubprocessStatusAndPromotesCleanupFailure
 func TestIntegrationEntrypointConsumersUseOneBoundaryAndKeepUnitTier(t *testing.T) {
 	makefile := readRepositoryFile(t, "Makefile")
 	workflow := readRepositoryFile(t, filepath.Join(".github", "workflows", "ci.yml"))
-	requireExecutableLines(t, makeRecipe(t, makefile, "test-integration"), []string{"./" + integrationEntrypoint})
-	requireExecutableLines(t, makeRecipe(t, makefile, "test-unit"), []string{"go vet ./...", "go test ./..."})
-	requireExecutableLines(t, workflowIntegrationRun(t, workflow), []string{"./" + integrationEntrypoint})
+	requireOnlyExecutableBoundary(t, "Makefile test-integration", makeRecipes(makefile, "test-integration"), []string{"./" + integrationEntrypoint})
+	requireOnlyExecutableBoundary(t, "Makefile test-unit", makeRecipes(makefile, "test-unit"), []string{"go vet ./...", "go test ./..."})
+	requireOnlyExecutableBoundary(t, "CI integration step", workflowIntegrationRuns(workflow), []string{"./" + integrationEntrypoint})
+}
+
+func TestIntegrationEntrypointConsumerParsersExposeDuplicateExecutableBoundaries(t *testing.T) {
+	makefile := "test-integration:\n\t@./scripts/test-integration.sh\n\ntest-integration: stale\n\t@go test -tags=integration ./...\n"
+	if got := len(makeRecipes(makefile, "test-integration")); got != 2 {
+		t.Fatalf("duplicate Makefile targets discovered = %d, want 2", got)
+	}
+	workflow := "steps:\n  - name: Integration tier\n    run: |\n      ./scripts/test-integration.sh\n  - name: Stale integration tier\n    run: |\n      go test -tags=integration ./...\n"
+	if got := len(workflowIntegrationRuns(workflow)); got != 2 {
+		t.Fatalf("duplicate CI integration run blocks discovered = %d, want 2", got)
+	}
 }
 
 func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypointRun {
@@ -444,12 +455,12 @@ func executableLines(source string) []string {
 	return lines
 }
 
-func makeRecipe(t *testing.T, source, target string) string {
-	t.Helper()
+func makeRecipes(source, target string) []string {
 	lines := strings.Split(source, "\n")
 	header := target + ":"
+	var recipes []string
 	for i, line := range lines {
-		if line != header {
+		if !strings.HasPrefix(line, header) {
 			continue
 		}
 		var recipe []string
@@ -463,15 +474,14 @@ func makeRecipe(t *testing.T, source, target string) string {
 			}
 			break
 		}
-		return strings.Join(recipe, "\n")
+		recipes = append(recipes, strings.Join(recipe, "\n"))
 	}
-	t.Fatalf("Makefile target %s not found", target)
-	return ""
+	return recipes
 }
 
-func workflowIntegrationRun(t *testing.T, source string) string {
-	t.Helper()
+func workflowIntegrationRuns(source string) []string {
 	lines := strings.Split(source, "\n")
+	var runs []string
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(trimmed, "- name:") || !strings.Contains(strings.ToLower(trimmed), "integration") {
@@ -493,18 +503,21 @@ func workflowIntegrationRun(t *testing.T, source string) string {
 				}
 				run = append(run, candidate)
 			}
-			return strings.Join(run, "\n")
+			runs = append(runs, strings.Join(run, "\n"))
+			break
 		}
 	}
-	t.Fatal("CI integration run block not found")
-	return ""
+	return runs
 }
 
-func requireExecutableLines(t *testing.T, source string, want []string) {
+func requireOnlyExecutableBoundary(t *testing.T, name string, sources []string, want []string) {
 	t.Helper()
-	got := executableLines(source)
+	if len(sources) != 1 {
+		t.Fatalf("%s executable boundaries = %d, want exactly 1", name, len(sources))
+	}
+	got := executableLines(sources[0])
 	if !slicesEqual(got, want) {
-		t.Fatalf("executable lines = %#v, want %#v", got, want)
+		t.Fatalf("%s executable lines = %#v, want %#v", name, got, want)
 	}
 }
 
