@@ -223,7 +223,7 @@ func TestIntegrationEntrypointConsumerParsersExposeDuplicateExecutableBoundaries
 	if got := len(makeRecipes(makefile, "test-integration")); got != 2 {
 		t.Fatalf("duplicate Makefile targets discovered = %d, want 2", got)
 	}
-	workflow := "steps:\n  - name: Integration tier\n    run: |\n      ./scripts/test-integration.sh\n  - name: Stale integration tier\n    run: |\n      go test -tags=integration ./...\n"
+	workflow := "steps:\n  - name: Integration tier\n    run: |\n      ./scripts/test-integration.sh\n  - name: Tests\n    run: |\n      go test -tags=integration ./...\n"
 	if got := len(workflowIntegrationRuns(workflow)); got != 2 {
 		t.Fatalf("duplicate CI integration run blocks discovered = %d, want 2", got)
 	}
@@ -483,28 +483,22 @@ func workflowIntegrationRuns(source string) []string {
 	lines := strings.Split(source, "\n")
 	var runs []string
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "- name:") || !strings.Contains(strings.ToLower(trimmed), "integration") {
+		if strings.TrimSpace(line) != "run: |" {
 			continue
 		}
-		for j := i + 1; j < len(lines); j++ {
-			if strings.HasPrefix(strings.TrimSpace(lines[j]), "- name:") {
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		var run []string
+		for _, candidate := range lines[i+1:] {
+			candidateIndent := len(candidate) - len(strings.TrimLeft(candidate, " "))
+			if strings.TrimSpace(candidate) != "" && candidateIndent <= indent {
 				break
 			}
-			if strings.TrimSpace(lines[j]) != "run: |" {
-				continue
-			}
-			indent := len(lines[j]) - len(strings.TrimLeft(lines[j], " "))
-			var run []string
-			for _, candidate := range lines[j+1:] {
-				candidateIndent := len(candidate) - len(strings.TrimLeft(candidate, " "))
-				if strings.TrimSpace(candidate) != "" && candidateIndent <= indent {
-					break
-				}
-				run = append(run, candidate)
-			}
-			runs = append(runs, strings.Join(run, "\n"))
-			break
+			run = append(run, candidate)
+		}
+		block := strings.Join(run, "\n")
+		executable := strings.Join(executableLines(block), "\n")
+		if strings.Contains(executable, integrationEntrypoint) || strings.Contains(executable, "go test") && (strings.Contains(executable, "-tags=integration") || strings.Contains(executable, "-tags integration")) {
+			runs = append(runs, block)
 		}
 	}
 	return runs
