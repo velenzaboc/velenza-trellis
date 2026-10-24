@@ -1,0 +1,9 @@
+{
+  "schema": "velenza_inarch_repo_sync/1",
+  "repo": "velenza-trellis",
+  "mode": "dual_mirror",
+  "git_head": "5b92c93a122a8878b758eabffde8fa9f9deebe33",
+  "inr_binary_imported": true,
+  "synced_at": "2026-10-21T01:54:36.218Z",
+  "note": "Imported Git DAG into .inarch via /opt/homebrew/bin/inr"
+}
