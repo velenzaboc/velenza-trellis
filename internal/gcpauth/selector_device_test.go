@@ -115,11 +115,21 @@ func TestDirectDeviceRefreshUsesExactIdentityWithoutImpersonation(t *testing.T) 
 	originalADC := defaultADCPath
 	defaultADCPath = func() (string, error) { return "", fmt.Errorf("shared ADC must never be resolved") }
 	t.Cleanup(func() { defaultADCPath = originalADC })
+	originalMetadata := newMetadataClient
+	newMetadataClient = func() metadataClient {
+		t.Fatal("direct device authentication must not discover metadata")
+		return nil
+	}
+	t.Cleanup(func() { newMetadataClient = originalMetadata })
+	type callerContextKey struct{}
 	calls := 0
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		if err := req.Context().Err(); err != nil {
 			return nil, err
+		}
+		if req.Context().Value(callerContextKey{}) != nil {
+			t.Fatal("long-lived token refresh retained caller context values")
 		}
 		if req.Method != http.MethodPost || req.URL.String() != "https://oauth2.googleapis.com/token" {
 			t.Fatalf("unexpected provider route %s %s; no IAM impersonation hop is permitted", req.Method, req.URL)
@@ -133,6 +143,13 @@ func TestDirectDeviceRefreshUsesExactIdentityWithoutImpersonation(t *testing.T) 
 		parts := strings.Split(req.Form.Get("assertion"), ".")
 		if len(parts) != 3 {
 			t.Fatal("Google SDK did not produce a signed JWT assertion")
+		}
+		headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil { t.Fatal(err) }
+		var header map[string]any
+		if err := json.Unmarshal(headerJSON, &header); err != nil { t.Fatal(err) }
+		if header["alg"] != "RS256" {
+			t.Fatal("SDK assertion does not use the provider-required RS256 protocol")
 		}
 		claimsJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
 		if err != nil {
@@ -150,7 +167,8 @@ func TestDirectDeviceRefreshUsesExactIdentityWithoutImpersonation(t *testing.T) 
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"access_token":"synthetic-device-token","token_type":"Bearer","expires_in":3600}`)), Request: req}, nil
 	})
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{Transport: transport}))
+	caller := context.WithValue(context.Background(), callerContextKey{}, "request-only data")
+	ctx, cancel := context.WithCancel(context.WithValue(caller, oauth2.HTTPClient, &http.Client{Transport: transport}))
 	tokenSource, err := selector.TokenSource(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -192,12 +210,14 @@ func TestDirectDeviceCarrierClosesIdentityAndJSON(t *testing.T) {
 		{"wrong auth endpoint", strings.Replace(valid, "https://accounts.google.com/o/oauth2/auth", "https://attacker.invalid/auth", 1), "auth_uri"},
 		{"unknown field", strings.TrimSuffix(valid, "}") + `,"token_url":"https://attacker.invalid/token"}`, "not allowed"},
 		{"impersonation field", strings.TrimSuffix(valid, "}") + `,"service_account_impersonation_url":"https://iamcredentials.googleapis.com/"}`, "not allowed"},
+		{"delegation field", strings.TrimSuffix(valid, "}") + `,"delegates":[]}`, "not allowed"},
+		{"subject delegation", strings.TrimSuffix(valid, "}") + `,"subject":"human@example.com"}`, "not allowed"},
 		{"case variant", strings.TrimSuffix(valid, "}") + `,"CLIENT_EMAIL":"other@example.com"}`, "not allowed"},
 		{"duplicate field", strings.Replace(valid, `"type":"service_account"`, `"type":"service_account","type":"service_account"`, 1), "duplicate JSON key"},
 		{"trailing document", valid + `{}`, "trailing"},
 		{"null", `null`, "object"},
 		{"array", `[]`, "object"},
-		{"malformed", `{`, "decode"},
+		{"malformed", `{`, "JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := validateServiceAccountConfiguration([]byte(tc.body), directDeviceIdentity); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -216,7 +236,29 @@ func TestDirectDeviceCarrierClosesIdentityAndJSON(t *testing.T) {
 				t.Fatalf("missing field error = %v; want %q", err, field)
 			}
 		})
+		t.Run("blank/"+field, func(t *testing.T) {
+			var body map[string]any
+			if err := json.Unmarshal([]byte(valid), &body); err != nil { t.Fatal(err) }
+			body[field] = "  "
+			encoded, err := json.Marshal(body)
+			if err != nil { t.Fatal(err) }
+			if err := validateServiceAccountConfiguration(encoded, directDeviceIdentity); err == nil || !strings.Contains(err.Error(), field) {
+				t.Fatalf("blank field error = %v; want %q", err, field)
+			}
+		})
 	}
+	t.Run("optional metadata omitted", func(t *testing.T) {
+		var body map[string]any
+		if err := json.Unmarshal([]byte(valid), &body); err != nil { t.Fatal(err) }
+		for _, field := range []string{"project_id", "client_id", "auth_uri", "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"} {
+			delete(body, field)
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil { t.Fatal(err) }
+		if err := validateServiceAccountConfiguration(encoded, directDeviceIdentity); err != nil {
+			t.Fatalf("optional exported metadata became mandatory: %v", err)
+		}
+	})
 }
 
 func TestDirectDeviceTokenSourceRejectsUnsafeFilesAndOverrides(t *testing.T) {
@@ -257,6 +299,28 @@ func TestDirectDeviceTokenSourceRejectsUnsafeFilesAndOverrides(t *testing.T) {
 		selector.CredentialsFile = filepath.Join(t.TempDir(), "missing-device.json")
 		if _, err := selector.TokenSource(context.Background()); err == nil {
 			t.Fatal("missing device carrier accepted")
+		}
+	})
+	t.Run("relative path", func(t *testing.T) {
+		selector := directDeviceSelector(t)
+		selector.CredentialsFile = "device-key.json"
+		if _, err := selector.TokenSource(context.Background()); err == nil || !strings.Contains(err.Error(), "absolute") {
+			t.Fatalf("relative credential path accepted: %v", err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		selector := directDeviceSelector(t)
+		link := filepath.Join(t.TempDir(), "device-link.json")
+		if err := os.Symlink(selector.CredentialsFile, link); err != nil {
+			if !credentialSymlinkFixtureUnavailable(err) { t.Fatal(err) }
+			if modeErr := validateCredentialPathMode(os.ModeSymlink); modeErr == nil || !strings.Contains(modeErr.Error(), "symlink") {
+				t.Fatalf("symlink refusal missing at shared path boundary: %v", modeErr)
+			}
+			return
+		}
+		selector.CredentialsFile = link
+		if _, err := selector.TokenSource(context.Background()); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("symlink carrier accepted: %v", err)
 		}
 	})
 	t.Run("directory", func(t *testing.T) {
