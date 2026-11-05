@@ -53,10 +53,7 @@ func reviewProcessExpectedEnvironmentKeys() []string {
 
 func reviewProcessFixture(t *testing.T, input string) reviewProcessEnvironmentObservation {
 	t.Helper()
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	executable := reviewFixtureExecutable(t)
 	program, err := os.ReadFile(executable)
 	if err != nil {
 		t.Fatal(err)
