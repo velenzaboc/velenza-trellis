@@ -28,6 +28,7 @@ const (
 	CredentialsSourceApplicationDefault                = "application_default"
 	CredentialsProfileImpersonatedServiceAccount       = "impersonated_service_account"
 	CredentialsProfileAttachedServiceAccount           = "attached_service_account"
+	CredentialsProfileWorkloadIdentityFederation       = "workload_identity_federation"
 	CloudPlatformScope                                 = "https://www.googleapis.com/auth/cloud-platform"
 	maxCredentialConfigurationBytes              int64 = 1 << 20
 )
@@ -119,10 +120,12 @@ var (
 // process. CredentialsFile is a bounded experimental compatibility carrier;
 // production requires the application_default source plus one exact profile.
 type Selector struct {
-	CredentialsFile     string `json:"credentials_file,omitempty"`
-	CredentialsSource   string `json:"credentials_source,omitempty"`
-	CredentialsProfile  string `json:"credentials_profile,omitempty"`
-	CredentialsIdentity string `json:"credentials_identity,omitempty"`
+	CredentialsFile         string `json:"credentials_file,omitempty"`
+	CredentialsSource       string `json:"credentials_source,omitempty"`
+	CredentialsProfile      string `json:"credentials_profile,omitempty"`
+	CredentialsIdentity     string `json:"credentials_identity,omitempty"`
+	CredentialsBaseIdentity string `json:"credentials_base_identity,omitempty"`
+	CredentialsAudience     string `json:"credentials_audience,omitempty"`
 }
 
 // Validate closes the selector before any client is constructed.
@@ -145,7 +148,14 @@ func (s Selector) Validate(label string, requireApplicationDefault bool) error {
 	if !serviceAccountEmailPattern.MatchString(s.CredentialsIdentity) {
 		return fmt.Errorf("%s: credentials_identity %q is not a canonical user-managed service-account email", label, s.CredentialsIdentity)
 	}
+	if s.CredentialsProfile != CredentialsProfileWorkloadIdentityFederation && s.CredentialsAudience != "" {
+		return fmt.Errorf("%s: credentials_audience is only valid for workload_identity_federation", label)
+	}
 	switch s.CredentialsProfile {
+	case CredentialsProfileWorkloadIdentityFederation:
+		if err := s.validateWorkloadIdentitySelector(); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
 	case CredentialsProfileImpersonatedServiceAccount:
 		// Both the ADC environment carrier and the explicit experimental carrier
 		// contain the same typed impersonation document and receive identical
@@ -203,6 +213,8 @@ func (s Selector) tokenSource(ctx context.Context, detachRefresh bool, scopes ..
 		scopes = []string{CloudPlatformScope}
 	}
 	switch s.CredentialsProfile {
+	case CredentialsProfileWorkloadIdentityFederation:
+		return s.workloadIdentityTokenSource(ctx, scopes, detachRefresh)
 	case CredentialsProfileImpersonatedServiceAccount:
 		return s.impersonatedTokenSource(ctx, scopes, detachRefresh)
 	case CredentialsProfileAttachedServiceAccount:
@@ -668,7 +680,7 @@ func ValidateConfigCredentialShape(data []byte) error {
 				return fmt.Errorf("config credential shape: google_credentials must be an object")
 			}
 			if err := validateCredentialObjectKeys(selector, "google_credentials", []string{
-				"credentials_file", "credentials_source", "credentials_profile", "credentials_identity",
+				"credentials_file", "credentials_source", "credentials_profile", "credentials_identity", "credentials_base_identity", "credentials_audience",
 			}); err != nil {
 				return fmt.Errorf("config credential shape: %w", err)
 			}

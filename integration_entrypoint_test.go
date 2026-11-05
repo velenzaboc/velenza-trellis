@@ -212,10 +212,15 @@ func TestIntegrationEntrypointPreservesSubprocessStatusAndPromotesCleanupFailure
 
 func TestIntegrationEntrypointConsumersUseOneBoundaryAndKeepUnitTier(t *testing.T) {
 	makefile := readRepositoryFile(t, "Makefile")
-	workflow := readRepositoryFile(t, filepath.Join(".github", "workflows", "ci.yml"))
+	localGate := readRepositoryFile(t, filepath.Join("scripts", "verify-local.sh"))
+	if _, err := os.Stat(filepath.Join(".github", "workflows", "ci.yml")); !os.IsNotExist(err) {
+		t.Fatal("automatic CI test workflow must remain absent")
+	}
 	requireSharedIntegrationBoundary(t, "Makefile test-integration", makeRecipes(makefile, "test-integration"))
 	requireOnlyExecutableBoundary(t, "Makefile test-unit", makeRecipes(makefile, "test-unit"), []string{"go vet ./...", "go test ./..."})
-	requireSharedIntegrationBoundary(t, "CI integration step", workflowIntegrationRuns(workflow))
+	if strings.Count(localGate, "timeout 1200 bash ./scripts/test-integration.sh") != 1 {
+		t.Fatal("guarded local verification must invoke the complete integration entrypoint exactly once")
+	}
 }
 
 func TestIntegrationEntrypointConsumerAcceptsOnlyDirectOrBashInvocation(t *testing.T) {
@@ -359,9 +364,9 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 func writeGoFixture(t *testing.T, directory, mode string) {
 	t.Helper()
 	files := map[string]string{
-		"go.mod":       "module example.com/integration-entrypoint-fixture\n\ngo 1.22\n",
-		"main.go":      "package main\n",
-		"unit_test.go": "package main\n\nimport \"testing\"\n\nfunc TestUnitOwnsEndpoint(t *testing.T) {}\n",
+		"go.mod":                      "module example.com/integration-entrypoint-fixture\n\ngo 1.22\n",
+		"main.go":                     "package main\n",
+		"unit_test.go":                "package main\n\nimport \"testing\"\n\nfunc TestUnitOwnsEndpoint(t *testing.T) {}\n",
 		"variant_integration_test.go": "//go:build integration && extra\n\npackage main\n\nimport \"testing\"\n\nfunc TestWrongTagVariant(t *testing.T) {}\n",
 	}
 	switch mode {
