@@ -309,6 +309,9 @@ func runIntegrationEntrypoint(t *testing.T, overrides map[string]string) entrypo
 	env := append([]string{}, os.Environ()...)
 	env = setEnvironment(env, "PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	env = setEnvironment(env, "REAL_GO", realGo)
+	// These standalone source-selection fixtures have no release provenance.
+	// Do not inherit a surrounding workspace VCS from their native temp root.
+	env = setEnvironment(env, "GOFLAGS", strings.TrimSpace(os.Getenv("GOFLAGS")+" -buildvcs=false"))
 	env = setEnvironment(env, "FAKE_COMMAND_LOG", commandLog)
 	env = setEnvironment(env, "FAKE_STATE_DIR", stateDir)
 	env = setEnvironment(env, "FAKE_READY", "1")
