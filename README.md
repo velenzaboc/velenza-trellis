@@ -172,45 +172,44 @@ smoke. The target schema is `Tasks` key `(project_id, id)`, `TaskLinks` key
 
 Licensed under the Apache License, Version 2.0. See `LICENSE` for details.
 
-## Certificate-based workstation credentials
+## Per-service certificate credentials
 
-The opt-in `workload_identity_federation` credential profile uses the selected
-host's existing X.509 workload credential and then impersonates the scoped
-operator. It never uses the device identity directly for application requests.
-For example, verification-host selects this single process-level configuration:
+The opt-in `workload_identity_federation` credential profile uses this service's
+own X.509 workload credential and its exact scoped service-account identity.
+It has no shared host identity or additional impersonation hop:
 
 ```json
 {
   "google_credentials": {
     "credentials_source": "application_default",
     "credentials_profile": "workload_identity_federation",
-    "credentials_base_identity": "device-builder@verification-project.iam.gserviceaccount.com",
     "credentials_identity": "task-operator@verification-project.iam.gserviceaccount.com",
-    "credentials_audience": "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/verification-device/providers/device-certificate"
+    "credentials_audience": "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/verification-services/providers/service-certificate"
   }
 }
 ```
 
-Select its existing owner-only `external_account` carrier with the command's
+Select the service's owner-only `external_account` carrier using the command's
 `GOOGLE_APPLICATION_CREDENTIALS`. The carrier must match the declared audience,
 use `https://sts.mtls.googleapis.com/v1/token` with the mTLS subject-token type,
-and impersonate the exact declared base identity through the canonical mTLS IAM
-Credentials endpoint. The SDK then impersonates `credentials_identity` for all
-application clients. Both identities must be distinct service accounts.
+and impersonate exactly `credentials_identity` through the canonical mTLS IAM
+Credentials endpoint. `credentials_base_identity` must be absent or empty.
+The provider and IAM policy bind each service's own certificate subject to its
+service account; a host-wide or sibling-service target is rejected.
 
 The carrier must explicitly reference an owner-only certificate configuration
 with `cert_configs.workload.cert_path` and `key_path`; both files must be absolute,
 owner-only regular files containing a matching certificate and private key.
 Implicit certificate discovery, alternative token sources, unknown fields,
 endpoint overrides, human ADC fallback, proxy/logging overrides and disabled
-post-quantum TLS are refused. No software installation, IAM mutation or device
-credential transfer is part of this profile. Mount the original host-local files
-read-only at their declared paths when running the service in a container.
+post-quantum TLS are refused. Mount only this service's existing credential and
+certificate files read-only at their declared paths. Credential provisioning and
+service deployment remain separately authorized operational steps.
 
-Unit tests construct the real pinned Google X.509 credential provider using
-fresh ephemeral certificate fixtures and exercise negative selection controls.
-They do not establish live IAM permission or a successful token exchange; verify
-those separately using this host's exact identity before switching clients.
+Unit tests construct the real pinned Google X.509 provider using independent,
+fresh certificate fixtures for distinct services and exercise negative selection
+controls. They do not establish live IAM permission or a successful token exchange;
+verify those separately before switching clients.
 
 ## Guarded local verification and protected delivery
 

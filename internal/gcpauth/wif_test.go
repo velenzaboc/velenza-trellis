@@ -40,12 +40,15 @@ type workloadFixture struct {
 	config                                     map[string]any
 }
 
-func newWorkloadFixture(t *testing.T) workloadFixture {
+func newWorkloadFixture(t *testing.T, identity ...string) workloadFixture {
 	t.Helper()
 	clearWorkloadEnvironment(t)
 	dir := t.TempDir()
 	f := workloadFixture{carrierPath: filepath.Join(dir, "verification-host.json"), configPath: filepath.Join(dir, "certificate_config.json"), certPath: filepath.Join(dir, "client.pem"), keyPath: filepath.Join(dir, "client.key")}
-	f.selector = Selector{CredentialsSource: CredentialsSourceApplicationDefault, CredentialsProfile: CredentialsProfileWorkloadIdentityFederation, CredentialsBaseIdentity: "device-builder@verification-project.iam.gserviceaccount.com", CredentialsIdentity: "task-operator@verification-project.iam.gserviceaccount.com", CredentialsAudience: "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/verification-device/providers/device-certificate"}
+	f.selector = Selector{CredentialsSource: CredentialsSourceApplicationDefault, CredentialsProfile: CredentialsProfileWorkloadIdentityFederation, CredentialsIdentity: "task-operator@verification-project.iam.gserviceaccount.com", CredentialsAudience: "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/verification-device/providers/device-certificate"}
+	if len(identity) != 0 {
+		f.selector.CredentialsIdentity = identity[0]
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +58,7 @@ func newWorkloadFixture(t *testing.T) workloadFixture {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	ca := &x509.Certificate{SerialNumber: big.NewInt(1001), Subject: pkix.Name{Organization: []string{"Velenza"}, CommonName: "verification-host device federation CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1001), Subject: pkix.Name{Organization: []string{"Velenza"}, CommonName: "verification service federation CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
 	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +67,7 @@ func newWorkloadFixture(t *testing.T) workloadFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(1002), Subject: pkix.Name{Organization: []string{"Velenza"}, CommonName: "verification-host"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(1002), Subject: pkix.Name{Organization: []string{"Velenza"}, CommonName: strings.Split(f.selector.CredentialsIdentity, "@")[0]}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, parsedCA, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +79,7 @@ func newWorkloadFixture(t *testing.T) workloadFixture {
 	writeWorkloadBytes(t, f.certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 	writeWorkloadBytes(t, f.keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}))
 	f.config = map[string]any{"cert_configs": map[string]any{"workload": map[string]any{"cert_path": f.certPath, "key_path": f.keyPath}}}
-	f.carrier = map[string]any{"type": "external_account", "audience": f.selector.CredentialsAudience, "subject_token_type": "urn:ietf:params:oauth:token-type:mtls", "token_url": "https://sts.mtls.googleapis.com/v1/token", "service_account_impersonation_url": "https://iamcredentials.mtls.googleapis.com/v1/projects/-/serviceAccounts/" + f.selector.CredentialsBaseIdentity + ":generateAccessToken", "universe_domain": "googleapis.com", "credential_source": map[string]any{"certificate": map[string]any{"certificate_config_location": f.configPath}}}
+	f.carrier = map[string]any{"type": "external_account", "audience": f.selector.CredentialsAudience, "subject_token_type": "urn:ietf:params:oauth:token-type:mtls", "token_url": "https://sts.mtls.googleapis.com/v1/token", "service_account_impersonation_url": "https://iamcredentials.mtls.googleapis.com/v1/projects/-/serviceAccounts/" + f.selector.CredentialsIdentity + ":generateAccessToken", "universe_domain": "googleapis.com", "credential_source": map[string]any{"certificate": map[string]any{"certificate_config_location": f.configPath}}}
 	writeWorkloadJSON(t, f.configPath, f.config)
 	writeWorkloadJSON(t, f.carrierPath, f.carrier)
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", f.carrierPath)
@@ -97,11 +100,10 @@ func writeWorkloadJSON(t *testing.T, path string, value any) {
 	writeWorkloadBytes(t, path, data)
 }
 
-func TestWorkloadProfileConstructsTypedX509AndScopedOperatorSources(t *testing.T) {
-	f := newWorkloadFixture(t)
+func TestWorkloadProfileConstructsEachServicesOwnTypedX509Source(t *testing.T) {
 	for _, target := range []string{"task-operator@verification-project.iam.gserviceaccount.com", "spec-operator@verification-project.iam.gserviceaccount.com"} {
+		f := newWorkloadFixture(t, target)
 		s := f.selector
-		s.CredentialsIdentity = target
 		if err := s.Validate("google_credentials", true); err != nil {
 			t.Fatal(err)
 		}
@@ -109,8 +111,8 @@ func TestWorkloadProfileConstructsTypedX509AndScopedOperatorSources(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(raw), s.CredentialsBaseIdentity) {
-			t.Fatal("validated source lost device identity")
+		if !strings.Contains(string(raw), s.CredentialsIdentity) {
+			t.Fatal("validated source lost its exact service identity")
 		}
 		// Fixture-only diagnostics: these bytes are generated by this test and
 		// contain no deployed identity material. Production errors stay redacted.
@@ -142,9 +144,11 @@ func TestWorkloadSelectorRejectsAmbiguousTopology(t *testing.T) {
 		{"wrong audience host", func(s *Selector) {
 			s.CredentialsAudience = strings.ReplaceAll(s.CredentialsAudience, "iam.googleapis.com", "attacker.invalid")
 		}},
-		{"missing base", func(s *Selector) { s.CredentialsBaseIdentity = "" }},
-		{"source equals target", func(s *Selector) { s.CredentialsIdentity = s.CredentialsBaseIdentity }},
-		{"human source", func(s *Selector) { s.CredentialsBaseIdentity = "operator@example.com" }},
+		{"shared host base forbidden", func(s *Selector) {
+			s.CredentialsBaseIdentity = "device-builder@verification-project.iam.gserviceaccount.com"
+		}},
+		{"missing target", func(s *Selector) { s.CredentialsIdentity = "" }},
+		{"any base identity forbidden", func(s *Selector) { s.CredentialsBaseIdentity = "operator@example.com" }},
 		{"human target", func(s *Selector) { s.CredentialsIdentity = "operator@example.com" }},
 		{"explicit second file", func(s *Selector) { s.CredentialsFile = f.carrierPath }},
 		{"ambient source", func(s *Selector) { s.CredentialsSource = "ambient" }},
@@ -174,10 +178,10 @@ func TestWorkloadCarrierRejectsDifferentIdentityAndCredentialMechanisms(t *testi
 		{"wrong subject type", func(c map[string]any) { c["subject_token_type"] = "urn:ietf:params:oauth:token-type:jwt" }},
 		{"non mtls sts", func(c map[string]any) { c["token_url"] = "https://sts.googleapis.com/v1/token" }},
 		{"redirected token", func(c map[string]any) { c["token_url"] = "https://attacker.invalid/token" }},
-		{"borrowed source", func(c map[string]any) {
+		{"different service account", func(c map[string]any) {
 			c["service_account_impersonation_url"] = "https://iamcredentials.mtls.googleapis.com/v1/projects/-/serviceAccounts/device-other@verification-project.iam.gserviceaccount.com:generateAccessToken"
 		}},
-		{"non mtls source", func(c map[string]any) {
+		{"non mtls service endpoint", func(c map[string]any) {
 			c["service_account_impersonation_url"] = strings.Replace(c["service_account_impersonation_url"].(string), "iamcredentials.mtls.", "iamcredentials.", 1)
 		}},
 		{"different universe", func(c map[string]any) { c["universe_domain"] = "example.com" }},
