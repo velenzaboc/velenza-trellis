@@ -256,7 +256,7 @@ func TestTrellisOpenSourceLicenseAndReadmeAndCLIHelpHygiene(t *testing.T) {
 		t.Errorf("LICENSE missing Apache-2.0 header")
 	}
 
-	for _, docFile := range []string{"NOTICE", "CONTRIBUTING.md", ".github/workflows/ci.yml"} {
+	for _, docFile := range []string{"NOTICE", "CONTRIBUTING.md", "scripts/verify-local.sh"} {
 		if _, err := os.Stat(docFile); err != nil {
 			t.Errorf("required open-source file %s missing: %v", docFile, err)
 		}

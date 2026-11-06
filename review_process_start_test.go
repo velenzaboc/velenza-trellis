@@ -90,10 +90,7 @@ func TestReviewProcessStartChild(t *testing.T) {
 
 func reviewStartFixture(t *testing.T, mode string, extraArgs ...string) (*ReviewProducerConfig, []byte) {
 	t.Helper()
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	executable := reviewFixtureExecutable(t)
 	program, err := os.ReadFile(executable)
 	if err != nil {
 		t.Fatal(err)
